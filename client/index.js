@@ -1,237 +1,26 @@
-let canvas = null;
-let slider = null;
-let color_picker = null;
-let ctx = null;
-let socket = null;
-let my_id = null;
-let users = {};
+const DEFAULT_WIDTH = 5;
+const DEFAULT_COLOR = '#000000';
 
-let pencil_color = '#000000';
-let did_something = false;
-let current_tool = 'pencil';
-let drawing = false;
-let my_last_p = {'x': 0, 'y': 0};
-let my_last_p_nn = null;
-let eraser_width = 100;
-let pencil_width = 2;
+let Me = null;
+let Ctx = null;
+let Socket = null;
+let Users = {};
 
-const history_max = 50;
-let canvas_history = [];
+let Elements = {
+    'canvas': null,
+    'slider': null,
+    'color_picker': null
+};
 
-const MESSAGE_TYPE = {
+let MESSAGE_TYPE = {
     'DRAW': 0,
     'INIT': 1,
     'USER_CONNECT': 2,
     'USER_DISCONNECT': 3,
     'STROKE_END': 4,
     'USER_STYLE_CHANGE': 5,
+    'STROKE_START': 6,
 };
-
-function get_blob() {
-    return new Promise(function(resolve, reject) {
-        canvas.toBlob(function(blob) {
-            resolve(blob)
-        })
-    })
-}
-
-async function save_canvas() {
-    const blob = await get_blob();
-    if (canvas_history.length === history_max) {
-        canvas_history.shift();
-    }
-    canvas_history.push(blob);
-}
-
-async function up() {
-    canvas.removeEventListener('pointerup', up);
-    canvas.removeEventListener('pointerleave', up);
-
-    drawing = false;
-    my_last_p = null;
-    did_something = true;
-
-    const data = new ArrayBuffer(8);
-    const view = new Int32Array(data);
-
-    view[0] = 4;
-    view[1] = my_id;
-
-    socket.send(data);
-}
-
-function draw(last_p, x, y) {
-    if (last_p !== null) {
-        ctx.beginPath();
-        ctx.moveTo(last_p.x, last_p.y);
-        ctx.lineTo(x, y);
-        ctx.stroke();
-    }
-}
-
-function move(e) {
-    const x = e.offsetX;
-    const y = e.offsetY;
-
-    if (drawing) {
-        draw(my_last_p, x, y);
-
-        const data = new ArrayBuffer(16); // message tag (4 bytes) + my_id (4 bytes) + x (4 bytes) + y (4 bytes)
-        const view = new Int32Array(data);
-
-        view[0] = 0; // tag = 0 means POINT_DRAW
-        view[1] = my_id;
-        view[2] = x;
-        view[3] = y;
-
-        socket.send(data);
-    }
-
-    my_last_p = {'x': x, 'y': y};
-    my_last_p_nn = {'x': x, 'y': y};
-}
-
-let last_sent_color = null;
-let last_sent_width = null;
-
-function send_style_update_if_changed() {
-    const current_color = (current_tool === 'pencil' ? style_to_int(pencil_color) : 0xFFFFFF);
-    const current_width = (current_tool === 'pencil' ? pencil_width : eraser_width);
-
-    if (current_color !== last_sent_color || current_width != last_sent_width) {
-        const data = new ArrayBuffer(16) // message tag + my_id + color + width
-        const view = new Int32Array(data);
-
-        view[0] = 5;
-        view[1] = my_id;
-        view[2] = current_color;
-        view[3] = current_width;
-
-        socket.send(data);
-
-        last_sent_color = current_color;
-        last_send_width = current_width;
-    }
-}
-
-function down(e) {
-    drawing = true;
-    
-    save_canvas();
-    send_style_update_if_changed();
-
-    canvas.addEventListener('pointerup', up);
-    canvas.addEventListener('pointerleave', up);
-
-    const x = e.offsetX;
-    const y = e.offsetY;
-
-    draw(my_last_p, x, y);
-
-    const data = new ArrayBuffer(16); // message tag (4 bytes) + my_id (4 bytes) + x (4 bytes) + y (4 bytes)
-    const view = new Int32Array(data);
-
-    view[0] = 0; // tag = 0 means POINT_DRAW
-    view[1] = my_id;
-    view[2] = x;
-    view[3] = y;
-
-    socket.send(data);
-
-    my_last_p = {'x': x, 'y': y};
-    my_last_p_nn = {'x': x, 'y': y};
-}
-
-function change_tool_to(tool) {
-    if (tool === 'pencil') {
-        slider.setAttribute('min', 1.5);
-        slider.setAttribute('max', 10);
-        ctx.strokeStyle = 'black';
-        ctx.lineWidth = pencil_width;
-        slider.value = pencil_width;
-    } else if (tool === 'eraser') {
-        slider.setAttribute('min', 30);
-        slider.setAttribute('max', 500);
-        ctx.strokeStyle = 'white';
-        slider.value = eraser_width;
-        ctx.lineWidth = eraser_width;
-    }
-    current_tool = tool;
-}
-
-function change_stroke_width(width) {
-    if (current_tool === 'pencil') {
-        pencil_width = width;
-    } else if (current_tool === 'eraser') {
-        eraser_width = width;
-    }
-    ctx.lineWidth = width;
-}
-
-function change_color_local() {
-    pencil_color = color_picker.value;
-    ctx.strokeStyle = pencil_color;
-    send_style_update_if_changed();
-}
-
-function main() {
-    canvas = document.getElementById('cv');
-    canvas.width = 1920;
-    canvas.height = 1080 * 3;
-    ctx = canvas.getContext('2d');
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-
-    canvas.addEventListener('pointerdown', down);
-    canvas.addEventListener('pointermove', move);
-
-    slider = document.getElementById('stroke-width');
-    color_picker = document.getElementById('stroke-color');
-
-    document.getElementById('change-to-pencil').addEventListener('click', () => { change_tool_to('pencil'); })
-    document.getElementById('change-to-eraser').addEventListener('click', () => { change_tool_to('eraser'); })
-    color_picker.addEventListener('change', change_color_local);
-    slider.addEventListener('change', () => { change_stroke_width(slider.value); })
-
-    change_tool_to('pencil');
-
-    socket = new WebSocket('ws://localhost:8080');
-    socket.addEventListener('open', on_connect);
-    socket.addEventListener('message', on_message);
-
-    window.addEventListener('keydown', async (e) => {
-        if (e.code === 'KeyZ' && e.ctrlKey) {
-            e.preventDefault();
-            if (canvas_history.length > 0) {
-                const blob = canvas_history.pop();
-                const bitmap = await createImageBitmap(blob);
-                ctx.clearRect(0, 0, 1920, 1080 * 3);
-                ctx.drawImage(bitmap, 0, 0);
-            }
-            did_something = false;
-            return false;
-        }
-    })
-
-    canvas.ondragover = canvas.ondragenter = function(evt) {
-        evt.preventDefault();
-        return false;
-    };
-
-    canvas.ondrop = async function(evt) {
-       evt.preventDefault();
-       const file = evt.dataTransfer.files[0];
-       const bitmap = await createImageBitmap(file);
-       save_canvas();
-       ctx.drawImage(bitmap, evt.offsetX - Math.round(bitmap.width / 2), evt.offsetY - Math.round(bitmap.height / 2));
-       return false;
-    };
-}
-
-function on_connect() {
-    console.log('connect')
-}
 
 function leftpad(n, str) {
     let result = '';
@@ -254,112 +43,301 @@ function int_to_style(color) {
     return color_string;
 } 
 
-function draw_initial_strokes(data, base, starts, styles) {
-    for (let i = 0; i < starts.length - 1; ++i) {
-        const from = starts[i];
-        const to = starts[i + 1];
+function draw_strokes(strokes) {
+    for (const stroke of strokes) {
+        Ctx.lineWidth = stroke.width;
+        Ctx.strokeStyle = stroke.color;
 
-        const x0 = data[base + from + 0];
-        const y0 = data[base + from + 1];
-
-        const color = styles[i * 2 + 0];
-        const width = styles[i * 2 + 1];
-        const color_string = int_to_style(color);
-       
-        ctx.strokeStyle = color_string;
-        ctx.lineWidth = width;
-        ctx.beginPath();
-        ctx.moveTo(x0, y0);
-
-        for (let j = from + 2; j < to; j += 2) {
-            const x = data[base + j + 0];
-            const y = data[base + j + 1];
-
-            ctx.lineTo(x, y);
+        Ctx.beginPath();
+        for (let i = 1; i < stroke.points.length; ++i) {
+            const point = stroke.points[i];
+            Ctx.lineTo(point.x, point.y);
         }
-        ctx.stroke();
+        Ctx.stroke();
     }
-
 }
 
+function draw_current_stroke(user_id) {
+    const stroke = Users[user_id].current_stroke;
+    if (stroke !== null) {
+        const last = stroke.points.length - 1;
+        Ctx.lineWidth = Users[user_id].width;
+        Ctx.strokeStyle = Users[user_id].color;
+        Ctx.beginPath();
+        if (stroke.points.length > 1) {
+            Ctx.moveTo(stroke.points[last - 1].x, stroke.points[last - 1].y);
+            Ctx.lineTo(stroke.points[last].x, stroke.points[last].y);
+        } else {
+            Ctx.moveTo(stroke.points[last].x, stroke.points[last].y);
+        }
+        Ctx.stroke();
+    }
+}
+
+////////////////////////////////////////
+//////////////////// Event listeners
+////////////////////////////////////////
+function change_color(e) {
+    const color = e.target.value;
+    const color_packed = style_to_int(color);
+
+    const data = new ArrayBuffer(16) // message tag + my_id + color + width
+    const view = new Int32Array(data);
+
+    Users[Me].color = color;
+
+    view[0] = MESSAGE_TYPE.USER_STYLE_CHANGE;
+    view[1] = Me;
+    view[2] = color_packed;
+    view[3] = Users[Me].width;
+
+    Socket.send(data);
+}
+
+function change_slider(e) {
+    const width = e.target.value;
+    const color_packed = style_to_int(Users[Me].color);
+
+    const data = new ArrayBuffer(16) // message tag + my_id + color + width
+    const view = new Int32Array(data);
+
+    Users[Me].width = width;
+
+    view[0] = MESSAGE_TYPE.USER_STYLE_CHANGE;
+    view[1] = Me;
+    view[2] = color_packed;
+    view[3] = Users[Me].width;
+
+    Socket.send(data);
+}
+
+////////////////////////////////////////
+//////////////////// Pointer listeners
+////////////////////////////////////////
+async function up(e) {
+    if (Me === null) return;
+    
+    const x = e.offsetX;
+    const y = e.offsetY;
+
+    const data = new ArrayBuffer(16);
+    const view = new Int32Array(data);
+
+    view[0] = MESSAGE_TYPE.STROKE_END;
+    view[1] = Me;
+    view[2] = x;
+    view[3] = y;
+
+    Socket.send(data);
+    Users[Me].current_stroke.points.push({'x': x, 'y': y});
+    draw_current_stroke(Me);
+    Users[Me].current_stroke = null;
+
+    Elements.canvas.removeEventListener('pointerup', up);
+    Elements.canvas.removeEventListener('pointerleave', up);
+}
+
+function move(e) {
+    if (Me === null) return;
+
+    if (Users[Me].current_stroke !== null) {
+        const x = e.offsetX;
+        const y = e.offsetY;
+
+        const data = new ArrayBuffer(16); // message tag (4 bytes) + my id (4 bytes) + x (4 bytes) + y (4 bytes)
+        const view = new Int32Array(data);
+
+        view[0] = MESSAGE_TYPE.DRAW;
+        view[1] = Me;
+        view[2] = x;
+        view[3] = y;
+
+        Socket.send(data);
+        Users[Me].current_stroke.points.push({'x': x, 'y': y});
+        draw_current_stroke(Me);
+    }
+}
+
+function down(e) {
+    if (Me === null) return;
+
+    const x = e.offsetX;
+    const y = e.offsetY;
+
+    const data = new ArrayBuffer(16); // message tag (4 bytes) + my id (4 bytes) + x (4 bytes) + y (4 bytes)
+    const view = new Int32Array(data);
+
+    view[0] = MESSAGE_TYPE.STROKE_START;
+    view[1] = Me;
+    view[2] = x;
+    view[3] = y;
+
+    Socket.send(data);
+
+    Users[Me].current_stroke = {
+        'color': Users[Me].color,
+        'width': Users[Me].width,
+        'points': [{'x': x, 'y': y}]
+    };
+
+    draw_current_stroke(Me);
+
+    Elements.canvas.addEventListener('pointerup', up);
+    Elements.canvas.addEventListener('pointerleave', up);
+}
+
+
+////////////////////////////////////////
+//////////////////// Handlers
+////////////////////////////////////////
 function handle_draw(view) {
-    // draw
     const user_id = view[1];
     const x = view[2];
     const y = view[3];
-
-    if (user_id in users) {
-        const last_p = users[user_id].last_p;
-        
-        if (users[user_id].width !== users[user_id].last_drawn_width) {
-            ctx.lineWidth = users[user_id].width;
-        }
-
-        if (users[user_id].color !== users[user_id].last_drawn_color) {
-            ctx.strokeStyle = users[user_id].color;
-        }
-
-        draw(last_p, x, y);
-
-        users[user_id].last_p = {'x': x, 'y': y};
-        users[user_id].last_drawn_color = users[user_id].color;
-        users[user_id].last_drawn_width = users[user_id].width;
-    }
+    Users[user_id].current_stroke.points.push({'x': x, 'y': y});
+    draw_current_stroke(user_id);
 }
 
 function handle_init(view) {
-    // init
-    my_id = view[1];
-    const user_count = view[2];
-    let i = 3;
-    for (let j = 0; j < user_count; ++j) {
-        const uid = view[i];
-        users[uid] = { 'last_p': null };
-        ++i;
+    Me = view[1];
+
+    let at = 2;
+    let user_count = view[at++];
+    let user_ids_ordered = [];
+
+    for (let i = 0; i < user_count; ++i) {
+        const user_id = view[at++];
+        const user_color = view[at++];
+        const user_width = view[at++];
+        const user_current_stroke_length = view[at++];
+
+        let user_current_stroke = null;
+        if (user_current_stroke_length > 0) {
+            user_current_stroke = [];
+            user_current_stroke.length = user_current_stroke_length;
+        }
+
+        user_ids_ordered.push(user_id);
+
+        Users[user_id] = {
+            'color': int_to_style(user_color),
+            'width': user_width,
+            'current_stroke': user_current_stroke
+        };
     }
 
-    const fs_from_length = view[i];
-    const fs_from = [];
-    const fs_styles = [];
-    ++i;
+    for (let i = 0; i < user_count; ++i) {
+        const user_id = user_ids_ordered[i];
+        const user = Users[user_id];
 
-    for (let j = 0; j < fs_from_length; ++j) {
-        const from = view[i];
-        ++i;
-        fs_from.push(from);
+        if (user.current_stroke == null) {
+            continue;
+        }
+
+        for (let j = 0; j < user.current_stroke.length; ++j) {
+            const x = view[at++];
+            const y = view[at++];
+            user.current_stroke[j] = {'x': x, 'y': y};
+        }
     }
 
-    for (let j = 0; j < (fs_from_length - 1) * 2; ++j) {
-        const s = view[i];
-        ++i;
-        fs_styles.push(s);
+    console.log(Users);
+
+    const finished_strokes_length = view[at++];
+    const finished_strokes = [];
+    for (let i = 0; i < finished_strokes_length; ++i) {
+        const length = view[at++];
+        const color = int_to_style(view[at++]);
+        const width = view[at++];
+        const points = [];
+
+        points.length = length;
+
+        finished_strokes.push({
+            'color': color,
+            'width': width,
+            'points': points
+        });
     }
 
-    draw_initial_strokes(view, i, fs_from, fs_styles);
+    for (let i = 0; i < finished_strokes_length; ++i) {
+        for (let j = 0; j < finished_strokes[i].points.length; ++j) {
+            const x = view[at++];
+            const y = view[at++];
+            finished_strokes[i].points[j] = {'x': x, 'y': y};
+        }
+    }
+
+    draw_strokes(finished_strokes);
 }
 
 function handle_user_connect(view) {
     const user_id = view[1];
-    users[user_id] = { 'last_p': null };
+    if (user_id !== Me) {
+        Users[user_id] = { 
+            'color': DEFAULT_COLOR, 
+            'width': DEFAULT_WIDTH,
+            'current_stroke': null, 
+        };
+    }
+
+    console.log(Users);
 }
 
 function handle_user_disconnect(view) {
     const user_id = view[1];
-    delete users[user_id];
+    delete Users[user_id];
+    console.log(Users)
 }
 
 function handle_user_stroke_end(view) {
     const user_id = view[1];
-    users[user_id].last_p = null;
+    draw_current_stroke(user_id);
+    Users[user_id].current_stroke = null;
+}
+
+function handle_user_stroke_start(view) {
+    const user_id = view[1];
+    const x = view[2];
+    const y = view[3];
+
+    Users[user_id].current_stroke = {
+        'color': Users[user_id].color,
+        'width': Users[user_id].width,
+        'points': [{'x': x, 'y': y}]
+    };
+
+    draw_current_stroke(user_id);
 }
 
 function handle_user_style_change(view) {
-    const uid = view[1];
+    const user_id = view[1];
     const color = view[2];
     const width = view[3];
 
-    users[uid].color = int_to_style(color);
-    users[uid].width = width;
+    Users[user_id].color = int_to_style(color);
+    Users[user_id].width = width;
+
+    console.log(Users)
+}
+
+////////////////////////////////////////
+//////////////////// Socket listeners
+////////////////////////////////////////
+function on_close(event) {
+    // console.log('Lost connection to server');
+    // const id = setInterval(() => {
+    //     console.log('Reconnecting...')
+    //     try {
+    //         Socket = new WebSocket('ws://localhost:8080');
+    //     } catch (e) {
+    //         console.log('Fail');
+    //         return;
+    //     }
+
+    //     console.log('Success!');
+    //     clearInterval(id);
+    // }, 1000);
 }
 
 async function on_message(event) {
@@ -393,20 +371,50 @@ async function on_message(event) {
             break;
         }
 
+        case MESSAGE_TYPE.STROKE_START: {
+            handle_user_stroke_start(view);
+            break;
+        }
+
         case MESSAGE_TYPE.USER_STYLE_CHANGE: {
             handle_user_style_change(view);
             break;
         }
+
+        default: {
+            console.error('Unhandled message type', type);
+        }
     }
 }
 
-document.addEventListener('DOMContentLoaded', main);
+document.addEventListener('DOMContentLoaded', function main() {
+    Elements.canvas = document.getElementById('cv');
+    Elements.canvas.width = 1920;
+    Elements.canvas.height = 1080 * 3;
+    
+    Ctx = Elements.canvas.getContext('2d');
 
-window.addEventListener('paste', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const file = e.clipboardData.files[0];
-    const bitmap = await createImageBitmap(file);
-    save_canvas();
-    ctx.drawImage(bitmap, my_last_p_nn.x - Math.round(bitmap.width / 2), my_last_p_nn.y - Math.round(bitmap.height / 2));
+    Ctx.lineWidth = 2;
+    Ctx.lineJoin = 'round';
+    Ctx.lineCap = 'round';
+
+    Elements.canvas.addEventListener('pointerdown', down);
+    Elements.canvas.addEventListener('pointermove', move);
+
+    Elements.slider = document.getElementById('stroke-width');
+    Elements.color_picker = document.getElementById('stroke-color');
+
+    // document.getElementById('change-to-pencil').addEventListener('click', () => { change_tool_to('pencil'); })
+    // document.getElementById('change-to-eraser').addEventListener('click', () => { change_tool_to('eraser'); })
+
+    Elements.color_picker.addEventListener('change', change_color);
+    Elements.slider      .addEventListener('change', change_slider);
+
+    // change_tool_to('pencil');
+
+    const path = new URL(window.location.href).pathname;
+
+    Socket = new WebSocket(`ws://localhost:8080${path}`);
+    Socket.addEventListener('message', on_message);
+    // Socket.addEventListener('close', on_close);
 });
