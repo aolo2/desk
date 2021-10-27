@@ -6,7 +6,10 @@ import * as http from 'http';
 import * as fs from 'fs';
 
 const wss = new WebSocketServer({ port: 8080 });
-const store = open({ path: 'db.lmdb', dupSort: true });
+const store_root   = open({ path: 'db.lmdb' });
+const store_desk   = store_root.openDB('desks', { dupSort: true });
+const store_stroke = store_root.openDB('strokes');
+
 const users = {};
 
 const DEFAULT_WIDTH = 5;
@@ -214,16 +217,13 @@ async function handle_stroke_end(user_id, desk_id, message) {
         'points': user.current_stroke,
     };
 
-    console.log(finished_stroke.points.length)
-
-    await store.put(key_desk, finished_stroke);
-
-    let i = 0;
-    for (const s of store.getValues(key_desk)) {
-        ++i;
-        // console.log(s.points.length, s.color, s.width);
+    let stroke_id = random_id();
+    while (store_stroke.doesExist(stroke_id)) {
+        stroke_id = random_id();
     }
-    console.log('now', i, '=', JSON.stringify(finished_stroke).length / 1024)
+
+    await store_desk.put(key_desk, stroke_id);
+    await store_stroke.put(stroke_id, finished_stroke);
 
     user.current_stroke = null;
 }
@@ -252,7 +252,8 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
         }
     }
 
-    for (const stroke of store.getValues(key_desk)) {
+    for (const stroke_id of store_desk.getValues(key_desk)) {
+        const stroke = store_stroke.get(stroke_id);
         finished_strokes.push(stroke);
         total_finished_strokes_points += stroke.points.length;
     }
