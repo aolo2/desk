@@ -77,6 +77,18 @@ function draw_current_stroke(user_id) {
 ////////////////////////////////////////
 //////////////////// Event listeners
 ////////////////////////////////////////
+function update_stroke_preview(e) {
+    const width = Elements.slider.value;
+    const color = Elements.color_picker.value;
+
+    const w = Math.round(width / 2) + 'px';
+
+    Elements.preview.style.transform = `translate(${w}, -${w})`;
+    Elements.preview.style.width = width + 'px';
+    Elements.preview.style.height = width + 'px';
+    Elements.preview.style.background = color;
+}
+
 function change_color(e) {
     const color = e.target.value;
     const color_packed = style_to_int(color);
@@ -91,7 +103,7 @@ function change_color(e) {
     view[2] = color_packed;
     view[3] = Users[Me].width;
 
-    Socket.send(data);
+    (async () => { Socket.send(data); })();
 }
 
 function change_slider(e) {
@@ -108,7 +120,7 @@ function change_slider(e) {
     view[2] = color_packed;
     view[3] = Users[Me].width;
 
-    Socket.send(data);
+    (async () => { Socket.send(data); })();
 }
 
 ////////////////////////////////////////
@@ -128,7 +140,8 @@ async function up(e) {
     view[2] = x;
     view[3] = y;
 
-    Socket.send(data);
+    (async () => { Socket.send(data); })();
+
     Users[Me].current_stroke.points.push({'x': x, 'y': y});
     draw_current_stroke(Me);
     Users[Me].current_stroke = null;
@@ -152,7 +165,8 @@ function move(e) {
         view[2] = x;
         view[3] = y;
 
-        Socket.send(data);
+        (async () => { Socket.send(data); })();
+
         Users[Me].current_stroke.points.push({'x': x, 'y': y});
         draw_current_stroke(Me);
     }
@@ -172,7 +186,7 @@ function down(e) {
     view[2] = x;
     view[3] = y;
 
-    Socket.send(data);
+    (async () => { Socket.send(data); })();
 
     Users[Me].current_stroke = {
         'color': Users[Me].color,
@@ -241,8 +255,6 @@ function handle_init(view) {
         }
     }
 
-    console.log(Users);
-
     const finished_strokes_length = view[at++];
     const finished_strokes = [];
     for (let i = 0; i < finished_strokes_length; ++i) {
@@ -292,6 +304,9 @@ function handle_user_disconnect(view) {
 
 function handle_user_stroke_end(view) {
     const user_id = view[1];
+    const x = view[2];
+    const y = view[3];
+    Users[user_id].current_stroke.points.push({'x': x, 'y': y});
     draw_current_stroke(user_id);
     Users[user_id].current_stroke = null;
 }
@@ -403,18 +418,26 @@ document.addEventListener('DOMContentLoaded', function main() {
 
     Elements.slider = document.getElementById('stroke-width');
     Elements.color_picker = document.getElementById('stroke-color');
+    Elements.preview = document.getElementById('stroke-preview');
+
+    Elements.slider.value = DEFAULT_WIDTH;
+    Elements.color_picker.value = DEFAULT_COLOR;
 
     // document.getElementById('change-to-pencil').addEventListener('click', () => { change_tool_to('pencil'); })
     // document.getElementById('change-to-eraser').addEventListener('click', () => { change_tool_to('eraser'); })
 
     Elements.color_picker.addEventListener('change', change_color);
+    Elements.color_picker.addEventListener('input',  update_stroke_preview);
     Elements.slider      .addEventListener('change', change_slider);
+    Elements.slider      .addEventListener('input',  update_stroke_preview);
 
     // change_tool_to('pencil');
 
     const path = new URL(window.location.href).pathname;
 
-    Socket = new WebSocket(`ws://localhost:8080${path}`);
+    Socket = new WebSocket(`ws://${window.location.hostname}:8080${path}`);
     Socket.addEventListener('message', on_message);
+
+    update_stroke_preview();
     // Socket.addEventListener('close', on_close);
 });

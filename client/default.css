@@ -16,12 +16,35 @@ canvas {
     left: 10px;
     top: 10px;
     display: flex;
-    border: 1px solid #ddd;
-    background: #eee;
-    box-shadow: 0px 0px 4px rgba(0, 0, 0, 0.15);
+    /*border: 1px solid #ddd;*/
+    background: white;
+    box-shadow: 0px 1px 1px 0px rgba(0, 0, 0, 0.15);
     padding: .5rem;
     gap: .5rem;
     user-select: none;
+    overflow: hidden;
+    padding-right: 65px;
+}
+
+.tools-menu input[type="color"] {
+    background: none;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    border: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.tools-menu input[type="range"] {
+    cursor: pointer;
+}
+
+.tools-menu #stroke-preview {
+    position: absolute;
+    border-radius: 50%;
+    right: 25px;
+    top: 50%;
 }
 
 .tools-menu button {
