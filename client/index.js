@@ -23,6 +23,10 @@ let MESSAGE_TYPE = {
     'UNDO': 7,
 };
 
+function random_id() {
+    return Math.floor(Math.random() * 4294967295);
+}
+
 function leftpad(n, str) {
     let result = '';
     for (let i = 0; i < n - str.length; ++i) {
@@ -142,17 +146,20 @@ async function up(e) {
     const x = e.offsetX;
     const y = e.offsetY;
 
-    const data = new ArrayBuffer(16);
+    const data = new ArrayBuffer(20);
     const view = new Int32Array(data);
+    const stroke_id = random_id();
 
     view[0] = MESSAGE_TYPE.STROKE_END;
     view[1] = Me;
     view[2] = x;
     view[3] = y;
+    view[4] = stroke_id;
 
     (async () => { Socket.send(data); })();
 
     Users[Me].current_stroke.points.push({'x': x, 'y': y});
+    Users[Me].current_stroke.id = stroke_id;
     draw_current_stroke(Me);
     Users[Me].finished_strokes.push(Users[Me].current_stroke);
     Users[Me].current_stroke = null;
@@ -184,17 +191,20 @@ function move(e) {
 }
 
 function undo() {
-    const data = new ArrayBuffer(8); // message tag (4) + my id (4)
+    const data = new ArrayBuffer(12); // message tag (4) + my id (4) + stroke id (4)
     const view = new Int32Array(data);
 
-    view[0] = MESSAGE_TYPE.UNDO;
-    view[1] = Me;
+    const deleted_stroke = Users[Me].finished_strokes.pop();
 
-    (async () => { Socket.send(data); })();
+    if (deleted_stroke) {
+        view[0] = MESSAGE_TYPE.UNDO;
+        view[1] = Me;
+        view[2] = deleted_stroke.id;
 
-    Users[Me].finished_strokes.pop();
+        (async () => { Socket.send(data); })();
 
-    full_redraw();
+        full_redraw();
+    }
 }
 
 function down(e) {
@@ -290,6 +300,7 @@ function handle_init(view) {
     const finished_strokes = [];
 
     for (let i = 0; i < finished_strokes_length; ++i) {
+        const id = view[at++];
         const length = view[at++];
         const color = int_to_style(view[at++]);
         const width = view[at++];
@@ -299,6 +310,7 @@ function handle_init(view) {
         points.length = length;
 
         finished_strokes.push({
+            'id': id,
             'color': color,
             'width': width,
             'points': points,

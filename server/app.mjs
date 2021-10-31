@@ -208,6 +208,7 @@ async function handle_stroke_end(user_id, desk_id, message) {
 
     const x = message.readUInt32LE(2 * 4);
     const y = message.readUInt32LE(3 * 4);
+    const stroke_id = message.readUInt32LE(4 * 4);
     const user = users[desk_id][user_id];
 
     user.current_stroke.push({'x': x, 'y': y});
@@ -219,10 +220,10 @@ async function handle_stroke_end(user_id, desk_id, message) {
         'points': user.current_stroke,
     };
 
-    let stroke_id = random_id();
-    while (store_stroke.doesExist(stroke_id)) {
-        stroke_id = random_id();
-    }
+    // let stroke_id = random_id();
+    // while (store_stroke.doesExist(stroke_id)) {
+    //     stroke_id = random_id();
+    // }
 
     await store_desk.put(key_desk, stroke_id);
     await store_stroke.put(stroke_id, finished_stroke);
@@ -237,6 +238,11 @@ function handle_style_change(user_id, desk_id, message) {
 
     user.color = color;
     user.width = width;
+}
+
+function handle_undo(user_id, desk_id, message) {
+    const stroke_id = message.readUInt32LE(2 * 4);
+    store_stroke.remove(stroke_id);
 }
 
 function send_initital_info_to_connected_user(ws, user_id, desk_id) {
@@ -256,8 +262,12 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
 
     for (const stroke_id of store_desk.getValues(key_desk)) {
         const stroke = store_stroke.get(stroke_id);
-        finished_strokes.push(stroke);
-        total_finished_strokes_points += stroke.points.length;
+        if (stroke) {
+            // TODO: delete references to deleted strokes (but do we really need to?)
+            stroke.id = stroke_id;
+            finished_strokes.push(stroke);
+            total_finished_strokes_points += stroke.points.length;
+        }
     }
 
     let length = 0;
@@ -266,7 +276,7 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
     length += Object.keys(users[desk_id]).length * 16; // all user ids, colors, widths, current_stroke lengths
     length += total_current_stroke_points * 8; // all current_stokes packed
     length += 4; // finished_strokes length
-    length += finished_strokes.length * 16; // all finished_strokes lengths, colors, widths, user_ids
+    length += finished_strokes.length * 20; // all finished_strokes ids, lengths, colors, widths, user_ids
     length += total_finished_strokes_points * 8; // all finished_stokes packed
 
     const buffer = new ArrayBuffer(length);
@@ -303,6 +313,7 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
     view[at++] = finished_strokes.length;
 
     for (let i = 0; i < finished_strokes.length; ++i) {
+        view[at++] = finished_strokes[i].id;
         view[at++] = finished_strokes[i].points.length;
         view[at++] = finished_strokes[i].color;
         view[at++] = finished_strokes[i].width;
@@ -321,6 +332,7 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
 }
 
 wss.on('connection', async (ws, req) => {
+    // console.log(req)
     let user_id = random_id();
     let desk_id = parseInt(req.url.replace('/desk/', ''));
 
@@ -363,6 +375,11 @@ wss.on('connection', async (ws, req) => {
 
             case MESSAGE_TYPE.USER_STYLE_CHANGE: {
                 handle_style_change(user_id, desk_id, message);
+                break;
+            }
+
+            case MESSAGE_TYPE.UNDO: {
+                handle_undo(user_id, desk_id, message);
                 break;
             }
         }
