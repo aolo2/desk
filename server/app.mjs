@@ -22,6 +22,7 @@ const MESSAGE_TYPE = {
     'STROKE_END': 4,
     'USER_STYLE_CHANGE': 5,
     'STROKE_START': 6,
+    'UNDO': 7,
 };
 
 function random_id() {
@@ -212,6 +213,7 @@ async function handle_stroke_end(user_id, desk_id, message) {
     user.current_stroke.push({'x': x, 'y': y});
 
     const finished_stroke = {
+        'user_id': user_id,
         'width': user.width,
         'color': user.color,
         'points': user.current_stroke,
@@ -264,7 +266,7 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
     length += Object.keys(users[desk_id]).length * 16; // all user ids, colors, widths, current_stroke lengths
     length += total_current_stroke_points * 8; // all current_stokes packed
     length += 4; // finished_strokes length
-    length += finished_strokes.length * 12; // all finished_strokes lengths, colors, widths
+    length += finished_strokes.length * 16; // all finished_strokes lengths, colors, widths, user_ids
     length += total_finished_strokes_points * 8; // all finished_stokes packed
 
     const buffer = new ArrayBuffer(length);
@@ -304,6 +306,7 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
         view[at++] = finished_strokes[i].points.length;
         view[at++] = finished_strokes[i].color;
         view[at++] = finished_strokes[i].width;
+        view[at++] = finished_strokes[i].user_id;
     }
 
     for (let i = 0; i < finished_strokes.length; ++i) {

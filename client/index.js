@@ -20,6 +20,7 @@ let MESSAGE_TYPE = {
     'STROKE_END': 4,
     'USER_STYLE_CHANGE': 5,
     'STROKE_START': 6,
+    'UNDO': 7,
 };
 
 function leftpad(n, str) {
@@ -43,18 +44,27 @@ function int_to_style(color) {
     return color_string;
 } 
 
-function draw_strokes(strokes) {
-    for (const stroke of strokes) {
-        Ctx.lineWidth = stroke.width;
-        Ctx.strokeStyle = stroke.color;
+function full_redraw() {
+    console.time('Full redraw');
 
-        Ctx.beginPath();
-        for (let i = 1; i < stroke.points.length; ++i) {
-            const point = stroke.points[i];
-            Ctx.lineTo(point.x, point.y);
+    Ctx.clearRect(0, 0, Elements.canvas.width, Elements.canvas.height);
+
+    for (const user_id in Users) {
+        const user = Users[user_id];
+        for (const stroke of user.finished_strokes) {
+            Ctx.lineWidth = stroke.width;
+            Ctx.strokeStyle = stroke.color;
+
+            Ctx.beginPath();
+            for (let i = 1; i < stroke.points.length; ++i) {
+                const point = stroke.points[i];
+                Ctx.lineTo(point.x, point.y);
+            }
+            Ctx.stroke();
         }
-        Ctx.stroke();
     }
+
+    console.timeEnd('Full redraw');
 }
 
 function draw_current_stroke(user_id) {
@@ -144,6 +154,7 @@ async function up(e) {
 
     Users[Me].current_stroke.points.push({'x': x, 'y': y});
     draw_current_stroke(Me);
+    Users[Me].finished_strokes.push(Users[Me].current_stroke);
     Users[Me].current_stroke = null;
 
     Elements.canvas.removeEventListener('pointerup', up);
@@ -172,8 +183,27 @@ function move(e) {
     }
 }
 
+function undo() {
+    const data = new ArrayBuffer(8); // message tag (4) + my id (4)
+    const view = new Int32Array(data);
+
+    view[0] = MESSAGE_TYPE.UNDO;
+    view[1] = Me;
+
+    (async () => { Socket.send(data); })();
+
+    Users[Me].finished_strokes.pop();
+
+    full_redraw();
+}
+
 function down(e) {
     if (Me === null) return;
+
+    // TMP
+    if (e.button == 1) undo(e);
+
+    if (e.button !== 0) return;
 
     const x = e.offsetX;
     const y = e.offsetY;
@@ -236,7 +266,8 @@ function handle_init(view) {
         Users[user_id] = {
             'color': int_to_style(user_color),
             'width': user_width,
-            'current_stroke': user_current_stroke
+            'current_stroke': user_current_stroke,
+            'finished_strokes': [],
         };
     }
 
@@ -257,10 +288,12 @@ function handle_init(view) {
 
     const finished_strokes_length = view[at++];
     const finished_strokes = [];
+
     for (let i = 0; i < finished_strokes_length; ++i) {
         const length = view[at++];
         const color = int_to_style(view[at++]);
         const width = view[at++];
+        const user_id = view[at++];
         const points = [];
 
         points.length = length;
@@ -268,7 +301,8 @@ function handle_init(view) {
         finished_strokes.push({
             'color': color,
             'width': width,
-            'points': points
+            'points': points,
+            'user_id': user_id
         });
     }
 
@@ -278,9 +312,22 @@ function handle_init(view) {
             const y = view[at++];
             finished_strokes[i].points[j] = {'x': x, 'y': y};
         }
+
+        const user_id = finished_strokes[i].user_id;
+
+        if (!(user_id in Users)) {
+            Users[user_id] = {
+                'color': DEFAULT_COLOR, 
+                'width': DEFAULT_WIDTH,
+                'current_stroke': null,
+                'finished_strokes': []
+            };
+        }
+
+        Users[user_id].finished_strokes.push(finished_strokes[i]);
     }
 
-    draw_strokes(finished_strokes);
+    full_redraw();
 }
 
 function handle_user_connect(view) {
@@ -289,17 +336,18 @@ function handle_user_connect(view) {
         Users[user_id] = { 
             'color': DEFAULT_COLOR, 
             'width': DEFAULT_WIDTH,
-            'current_stroke': null, 
+            'current_stroke': null,
+            'finished_strokes': [],
         };
     }
 
-    console.log(Users);
+    // console.log(Users);
 }
 
 function handle_user_disconnect(view) {
     const user_id = view[1];
     delete Users[user_id];
-    console.log(Users)
+    // console.log(Users)
 }
 
 function handle_user_stroke_end(view) {
@@ -307,6 +355,7 @@ function handle_user_stroke_end(view) {
     const x = view[2];
     const y = view[3];
     Users[user_id].current_stroke.points.push({'x': x, 'y': y});
+    Users[user_id].finished_strokes.push(Users[user_id].current_stroke);
     draw_current_stroke(user_id);
     Users[user_id].current_stroke = null;
 }
@@ -333,9 +382,14 @@ function handle_user_style_change(view) {
     Users[user_id].color = int_to_style(color);
     Users[user_id].width = width;
 
-    console.log(Users)
+    // console.log(Users)
 }
 
+function handle_user_delete_last_stroke(view) {
+    const user_id = view[1];
+    Users[user_id].finished_strokes.pop();
+    full_redraw();
+}
 ////////////////////////////////////////
 //////////////////// Socket listeners
 ////////////////////////////////////////
@@ -393,6 +447,11 @@ async function on_message(event) {
 
         case MESSAGE_TYPE.USER_STYLE_CHANGE: {
             handle_user_style_change(view);
+            break;
+        }
+
+        case MESSAGE_TYPE.UNDO: {
+            handle_user_delete_last_stroke(view);
             break;
         }
 
