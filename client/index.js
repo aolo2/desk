@@ -72,20 +72,301 @@ function full_redraw() {
 }
 
 function draw_current_stroke(user_id) {
+    const ctx = (user_id === Me ? Ctx2 : Ctx);
     const stroke = Users[user_id].current_stroke;
+
     if (stroke !== null) {
         const last = stroke.points.length - 1;
-        Ctx.lineWidth = Users[user_id].width;
-        Ctx.strokeStyle = Users[user_id].color;
-        Ctx.beginPath();
+        ctx.lineWidth = Users[user_id].width;
+        ctx.strokeStyle = Users[user_id].color;
+        ctx.beginPath();
         if (stroke.points.length > 1) {
-            Ctx.moveTo(stroke.points[last - 1].x, stroke.points[last - 1].y);
-            Ctx.lineTo(stroke.points[last].x, stroke.points[last].y);
+            ctx.moveTo(stroke.points[last - 1].x, stroke.points[last - 1].y);
+            ctx.lineTo(stroke.points[last].x, stroke.points[last].y);
         } else {
-            Ctx.moveTo(stroke.points[last].x, stroke.points[last].y);
+            ctx.moveTo(stroke.points[last].x, stroke.points[last].y);
         }
-        Ctx.stroke();
+        ctx.stroke();
     }
+}
+
+function stroke_bbox(stroke, width) {
+    let xmin = stroke.points[0].x, ymin = stroke.points[0].y;
+    let xmax = xmin, ymax = ymin;
+
+    for (const point of stroke.points) {
+        if (point.x < xmin) xmin = point.x;
+        if (point.y < ymin) ymin = point.y;
+        if (point.x > xmax) xmax = point.x;
+        if (point.y > ymax) ymax = point.y;
+    }
+
+    xmin -= width;
+    ymin -= width;
+    xmax += width;
+    ymax += width;
+
+    return {
+        'xmin': xmin,
+        'ymin': ymin,
+        'xmax': xmax,
+        'ymax': ymax
+    };
+}
+
+function is_local_extrema(points, at) {
+    let is_xmax = true;
+    let is_xmin = true;
+    let is_ymax = true;
+    let is_ymin = true;
+
+    const p = points[at];
+
+    const from = Math.max(0, at - 5);
+    const to = Math.min(points.length, at + 5);
+
+    for (let i = from; i < to; ++i) {
+        if (i !== at) {
+            const other = points[i];
+            if (other.x >= p.x) is_xmax = false;
+            if (other.x <= p.x) is_xmin = false;
+            if (other.y >= p.y) is_ymax = false;
+            if (other.y <= p.y) is_ymin = false;
+        }
+    }
+    
+    const result = is_xmax || is_xmin || is_ymax || is_ymin;
+
+    return result;
+}
+
+function process_stroke(points, bbox) {
+    const result = [];
+
+    if (points.length === 0) return result;
+
+    const width = bbox.xmax - bbox.xmin;
+    const height = bbox.ymax - bbox.ymin;
+    const width20 = Math.round(width / 8);
+    const height20 = Math.round(height / 8);
+
+    result.push({'x': points[0].x, 'y': points[0].y});
+
+    // Ctx.strokeStyle = 'green';
+    // Ctx.lineWidth = 10;
+    // Ctx.beginPath();
+    // Ctx.moveTo(points[0].x, points[0].y);
+    // Ctx.lineTo(points[0].x, points[0].y);
+    // Ctx.stroke();
+
+    for (let i = 1; i < points.length; ++i) {
+        const p = points[i];
+        const last = result[result.length - 1];
+
+        const dx = Math.abs(p.x - last.x);
+        const dy = Math.abs(p.y - last.y);
+
+        if (dx == 0 || dy == 0) continue;
+
+        if (dx >= width20 || dy >= height20) {
+            result.push(p);
+        } else if (is_local_extrema(points, i)) {
+            result.push(p);
+        }
+    }
+
+    result.push({'x': points[points.length - 1].x, 'y': points[points.length - 1].y});    
+
+    console.log(points.length, result.length)
+
+    return result;
+}
+
+function compute_splines2(points) {
+    const result = [];
+
+    result.push(points[0]);
+
+    for (let i = 1; i < points.length - 2; ++i) {
+        const p0 = points[i - 1];
+        const p1 = points[i + 0];
+        const p2 = points[i + 1];
+        const p3 = points[i + 2];
+        const spline_points = cm(p0, p1, p2, p3, 5);
+        result.push(...spline_points);
+     }
+
+     result.push(points[points.length - 1]);
+
+     return result;
+}
+
+function bake_current_stroke(user_id, stroke, bbox) {
+    const processed_stroke = process_stroke(stroke.points, bbox);
+    // const xs = [200, 400, 500, 700];
+    // const ys = [500, 100, 100, 500];
+
+    // const processed_stroke = [];
+    // for (let i = 0; i < xs.length; ++i) {
+    //     processed_stroke.push({'x': xs[i], 'y': ys[i]});
+    // }
+    // const splines = compute_splines(processed_stroke);
+
+    const spline_points = compute_splines2(processed_stroke);
+
+    console.log(processed_stroke);
+    console.log(spline_points)
+
+    // Ctx.strokeStyle = 'green';
+    // Ctx.lineWidth = 5;
+
+    // Ctx.beginPath();
+    //     for (let i = 0; i < spline_points.length; ++i) {
+    //         Ctx.moveTo(spline_points[i].x, spline_points[i].y);
+    //         Ctx.lineTo(spline_points[i].x, spline_points[i].y);
+    //     }
+    // Ctx.stroke();
+
+    Ctx.lineWidth = 5;
+    Ctx.strokeStyle = Users[user_id].color;
+
+    Ctx.beginPath();
+        Ctx.moveTo(spline_points[0].x, spline_points[0].y);
+        for (let i = 1; i < spline_points.length; ++i) {
+            const p = spline_points[i];
+            Ctx.lineTo(p.x, p.y);
+        }
+    Ctx.stroke();
+
+    // Ctx.strokeStyle = 'blue';
+    // Ctx.lineWidth = 10;
+
+    // Ctx.beginPath();
+    //     for (let i = 0; i < processed_stroke.length; ++i) {
+    //         Ctx.moveTo(processed_stroke[i].x, processed_stroke[i].y);
+    //         Ctx.lineTo(processed_stroke[i].x, processed_stroke[i].y);
+    //     }
+    // Ctx.stroke();
+}
+
+////////////////////////////////////////
+//////////////////// Splines
+////////////////////////////////////////
+function tma(A, B, C, D) {
+    const N = D.length;
+
+    // Прямой ход
+    const C_prime = []
+    const D_prime = []
+
+    C_prime.push(C[0] / B[0])
+    D_prime.push(D[0] / B[0])
+
+    for (let i = 1; i < N; ++i) {
+        const nom = C[i];
+        const denom = B[i] - A[i] * C_prime[i - 1];
+        C_prime.push(nom / denom);
+    }
+
+    for (let i = 1; i < N; ++i) {
+        const nom = D[i] - A[i] * D_prime[i - 1];
+        const denom = B[i] - A[i] * C_prime[i - 1];
+        D_prime.push(nom / denom);
+    }
+
+    // Обратный ход
+    const X = [];
+
+    X.push(D_prime[N - 1]);
+
+    for (let i = 1; i < N; ++i) {
+        X.push(D_prime[N - 1 - i] - C_prime[N - 1 - i] * X[i - 1]);
+    }
+
+    X.reverse();
+
+    return X;
+}
+
+function compute_c(xs, ys) {
+    const N = xs.length;
+
+    const a = []; // под главной диагональю
+    const b = []; // главная диагональ
+    const c = []; // над главной диагональю
+    const d = []; // вектор правых частей
+
+    // Заполним поддиагональ
+    a.push(0);
+    for (let i = 2; i < N - 1; ++i) {
+        const h_i = xs[i] - xs[i - 1];
+        a.push(h_i / 6);
+    }
+
+    // Заполним диагональ
+    for (let i = 1; i < N - 1; ++i) {
+        const h_i = xs[i] - xs[i - 1];
+        const h_next = xs[i + 1] - xs[i];
+        b.push((h_i + h_next) / 3);
+    }
+
+    // Заполним наддиагональ
+    for (let i = 1; i < N - 2; ++i) {
+        const h_next = xs[i + 1] - xs[i];
+        c.push(h_next / 6);
+    }
+    c.push(0);
+
+    // Заполним правые части
+    for (let i = 1; i < N - 1; ++i) {
+        const h_i = xs[i] - xs[i - 1];
+        const h_next = xs[i + 1] - xs[i];
+        const S1 = (ys[i + 1] - ys[i]) / h_next;
+        const S2 = (ys[i] - ys[i - 1]) / h_i;
+        d.push(S1 - S2);
+    }
+
+    // Применим метод прогонки
+    const x = tma(a, b, c, d);
+
+    // Добавим c_0 и c_N
+    x.unshift(0);
+    x.push(0);
+
+    return x;
+}
+
+function compute_splines(points) {
+    console.time('splines');
+
+    const N = points.length;
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+
+    const a = [...ys];
+    const c = compute_c(xs, ys);
+    const d = [];
+    const b = [];
+
+    // Вычислим d
+    for (let i = N - 1; i > 0; --i) {
+        const h_i = xs[i] - xs[i - 1];
+        d.unshift((c[i] - c[i - 1]) / h_i);
+    }
+    d.unshift(0);
+
+    // Вычислим b
+    for (let i = N - 1; i > 0; --i) {
+        const h_i = xs[i] - xs[i - 1];
+        const S1 = (a[i] - a[i - 1]) / h_i;
+        const S2 = h_i * (2 * c[i] + c[i - 1]) / 6;
+        b.unshift(S1 + S2);
+    }
+    b.unshift(0);
+
+    console.timeEnd('splines');
+
+    return { 'a': a, 'b': b, 'c': c, 'd': d };
 }
 
 ////////////////////////////////////////
@@ -160,7 +441,12 @@ async function up(e) {
 
     Users[Me].current_stroke.points.push({'x': x, 'y': y});
     Users[Me].current_stroke.id = stroke_id;
-    draw_current_stroke(Me);
+    
+    const bbox = stroke_bbox(Users[Me].current_stroke, Users[Me].width);
+
+    bake_current_stroke(Me, Users[Me].current_stroke, bbox);
+    Ctx2.clearRect(bbox.xmin, bbox.ymin, bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin);
+
     Users[Me].finished_strokes.push(Users[Me].current_stroke);
     Users[Me].current_stroke = null;
 
@@ -473,16 +759,119 @@ async function on_message(event) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function main() {
-    Elements.canvas = document.getElementById('cv');
-    Elements.canvas.width = 1920;
-    Elements.canvas.height = 1080 * 3;
-    
-    Ctx = Elements.canvas.getContext('2d');
+function GetT(t, p0, p1) {
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const a = dx * dx + dy * dy;
+    const b = Math.pow(a, 0.25);
 
-    Ctx.lineWidth = 2;
-    Ctx.lineJoin = 'round';
-    Ctx.lineCap = 'round';
+    return b + t;
+}
+
+function Lerp(a, b, t) {
+    return a * t + b * (1 - t);
+}
+
+function cm(p0, p1, p2, p3, steps) {
+    const points = [];
+    const dt = 1 / steps;
+
+    for (let t = 0; t <= 1; t += dt) {
+        // const t0 = 0;
+        // const t1 = GetT(t0, p0, p1);
+        // const t2 = GetT(t1, p1, p2);
+        // const t3 = GetT(t2, p2, p3);
+        
+        // const t = ti;
+
+        // const a1x = (t1 - t) / (t1 - t0) * p0.x + (t - t0) / (t1 - t0) * p1.x;
+        // const a1y = (t1 - t) / (t1 - t0) * p0.y + (t - t0) / (t1 - t0) * p1.y;
+
+        // const a2x = (t2 - t) / (t2 - t1) * p1.x + (t - t1) / (t2 - t1) * p2.x;
+        // const a2y = (t2 - t) / (t2 - t1) * p1.y + (t - t1) / (t2 - t1) * p2.y;
+
+        // const a3x = (t3 - t) / (t3 - t2) * p2.x + (t - t2) / (t3 - t2) * p3.x;
+        // const a3y = (t3 - t) / (t3 - t2) * p2.y + (t - t2) / (t3 - t2) * p3.y;
+
+        // const b1x = (t2 - t) / (t3 - t0) * a1x + (t - t0) / (t2 - t0) * a2x;
+        // const b1y = (t2 - t) / (t3 - t0) * a1y + (t - t0) / (t2 - t0) * a2y;
+        
+        // const b2x = (t3 - t) / (t3 - t1) * a2x + (t - t1) / (t3 - t1) * a3x;
+        // const b2y = (t3 - t) / (t3 - t1) * a2y + (t - t1) / (t3 - t1) * a3y;
+
+        // const cx = (t2 - t) / (t2 - t1) * b1x + (t - t1) / (t2 - t1) * b2x;
+        // const cy = (t2 - t) / (t2 - t1) * b1y + (t - t1) / (t2 - t1) * b2y;
+
+        const tt = t * t;
+        const ttt = t * t * t;
+
+        const t0 = -ttt + 2 * tt - t;
+        const t1 = 3 * ttt - 5 * tt + 2;
+        const t2 = - 3 * ttt + 4 * tt + t;
+        const t3 = ttt - tt;
+
+        const x = 0.5 * (t0 * p0.x + t1 * p1.x + t2 * p2.x + t3 * p3.x);
+        const y = 0.5 * (t0 * p0.y + t1 * p1.y + t2 * p2.y + t3 * p3.y);
+
+        points.push({'x': x, 'y': y});
+    }
+
+    return points;
+}
+
+function test_catmull_rom() {
+    const p0 = {'x': 100, 'y': 100};
+    const p1 = {'x': 550, 'y': 550};
+    const p2 = {'x': 600, 'y': 300};
+    const p3 = {'x': 820, 'y': 180};
+
+    const points = cm(p0, p1, p2, p3, 30);
+
+    Ctx.lineWidth = 5;
+    Ctx.strokeStyle = 'red';
+
+    Ctx.beginPath();
+    Ctx.moveTo(p0.x, p0.y);
+    Ctx.lineTo(p0.x, p0.y);
+    Ctx.stroke();
+
+    Ctx.beginPath();
+    Ctx.moveTo(p1.x, p1.y);
+    Ctx.lineTo(p1.x, p1.y);
+    Ctx.stroke();
+
+    Ctx.beginPath();
+    Ctx.moveTo(p2.x, p2.y);
+    Ctx.lineTo(p2.x, p2.y);
+    Ctx.stroke();
+
+    Ctx.beginPath();
+    Ctx.moveTo(p3.x, p3.y);
+    Ctx.lineTo(p3.x, p3.y);
+    Ctx.stroke();
+
+    Ctx.strokeStyle = 'blue';
+    Ctx.lineWidth = 3;
+    Ctx.beginPath();
+    Ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; ++i) {
+        Ctx.lineTo(points[i].x, points[i].y);
+    }
+    Ctx.stroke();
+}
+
+document.addEventListener('DOMContentLoaded', function main() {
+    Elements.canvas  = document.getElementById('cv');
+    Elements.canvas2 = document.getElementById('cv-2');
+
+    Elements.canvas2.width  = Elements.canvas.width  = 1920;
+    Elements.canvas2.height = Elements.canvas.height = 1080 * 3;
+    
+    Ctx  = Elements.canvas.getContext('2d');
+    Ctx2 = Elements.canvas2.getContext('2d');
+
+    Ctx2.lineJoin = Ctx.lineJoin = 'round';
+    Ctx2.lineCap  = Ctx.lineCap  = 'round';
 
     Elements.canvas.addEventListener('pointerdown', down);
     Elements.canvas.addEventListener('pointermove', move);
@@ -510,5 +899,8 @@ document.addEventListener('DOMContentLoaded', function main() {
     Socket.addEventListener('message', on_message);
 
     update_stroke_preview();
+
+
+    // test_catmull_rom();
     // Socket.addEventListener('close', on_close);
 });

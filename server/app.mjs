@@ -243,6 +243,7 @@ function handle_style_change(user_id, desk_id, message) {
 function handle_undo(user_id, desk_id, message) {
     const stroke_id = message.readUInt32LE(2 * 4);
     store_stroke.remove(stroke_id);
+    desk_store.remove(desk_id, stroke_id);
 }
 
 function send_initital_info_to_connected_user(ws, user_id, desk_id) {
@@ -332,14 +333,12 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
 }
 
 wss.on('connection', async (ws, req) => {
-    // console.log(req)
-    let user_id = random_id();
     let desk_id = parseInt(req.url.replace('/desk/', ''));
-
     if (!(desk_id in users)) {
         users[desk_id] = {};
     }
 
+    let user_id = random_id();
     while (user_id in users[desk_id]) {
         user_id = random_id();
     }
