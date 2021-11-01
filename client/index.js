@@ -90,15 +90,24 @@ function draw_current_stroke(user_id) {
     }
 }
 
-function stroke_bbox(stroke, width) {
+function stroke_stats(stroke, width) {
+    let length = 0;
     let xmin = stroke.points[0].x, ymin = stroke.points[0].y;
     let xmax = xmin, ymax = ymin;
 
-    for (const point of stroke.points) {
+    for (let i = 0; i < stroke.points.length; ++i) {
+        const point = stroke.points[i];
         if (point.x < xmin) xmin = point.x;
         if (point.y < ymin) ymin = point.y;
         if (point.x > xmax) xmax = point.x;
         if (point.y > ymax) ymax = point.y;
+
+        if (i > 0) {
+            const last = stroke.points[i - 1];
+            const dx = point.x - last.x;
+            const dy = point.y - last.y;
+            length += Math.sqrt(dx * dx + dy * dy);
+        }
     }
 
     xmin -= width;
@@ -106,11 +115,16 @@ function stroke_bbox(stroke, width) {
     xmax += width;
     ymax += width;
 
-    return {
+    const bbox = {
         'xmin': xmin,
         'ymin': ymin,
         'xmax': xmax,
         'ymax': ymax
+    };
+
+    return {
+        'bbox': bbox,
+        'length': length,
     };
 }
 
@@ -140,15 +154,14 @@ function is_local_extrema(points, at) {
     return result;
 }
 
-function process_stroke(points, bbox) {
+function process_stroke(points, bbox, length) {
     const result = [];
 
     if (points.length === 0) return result;
 
     const width = bbox.xmax - bbox.xmin;
     const height = bbox.ymax - bbox.ymin;
-    const width20 = Math.round(width / 8);
-    const height20 = Math.round(height / 8);
+    const length_cutoff = 10;
 
     result.push({'x': points[0].x, 'y': points[0].y});
 
@@ -166,9 +179,9 @@ function process_stroke(points, bbox) {
         const dx = Math.abs(p.x - last.x);
         const dy = Math.abs(p.y - last.y);
 
-        if (dx == 0 || dy == 0) continue;
+        const dist2 = dx * dx + dy * dy;
 
-        if (dx >= width20 || dy >= height20) {
+        if (dist2 >= length_cutoff * length_cutoff) {
             result.push(p);
         } else if (is_local_extrema(points, i)) {
             result.push(p);
@@ -182,27 +195,82 @@ function process_stroke(points, bbox) {
     return result;
 }
 
-function compute_splines2(points) {
+function compute_splines2(points, closed) {
     const result = [];
 
-    result.push(points[0]);
+    if (!closed) {
+        result.push(points[0]);
 
-    for (let i = 1; i < points.length - 2; ++i) {
-        const p0 = points[i - 1];
-        const p1 = points[i + 0];
-        const p2 = points[i + 1];
-        const p3 = points[i + 2];
-        const spline_points = cm(p0, p1, p2, p3, 5);
-        result.push(...spline_points);
-     }
+        for (let i = 1; i < points.length - 2; ++i) {
+            const p0 = points[i - 1];
+            const p1 = points[i + 0];
+            const p2 = points[i + 1];
+            const p3 = points[i + 2];
+            const spline_points = cm(p0, p1, p2, p3, 5);
+            result.push(...spline_points);
+         }
 
-     result.push(points[points.length - 1]);
+         result.push(points[points.length - 1]);
+    } else {
+        for (let i = 0; i < points.length; ++i) {
+            const p0 = i > 0 ? points[i - 1] : points[points.length - 1];
+            const p1 = points[i + 0];
+            const p2 = points[(i + 1) % points.length];
+            const p3 = points[(i + 2) % points.length];
+            const spline_points = cm(p0, p1, p2, p3, 5);
+            result.push(...spline_points);
+         }
+    }
 
      return result;
 }
 
-function bake_current_stroke(user_id, stroke, bbox) {
-    const processed_stroke = process_stroke(stroke.points, bbox);
+function is_straight_line(points, length) {
+    const p0 = points[0];
+    const p1 = points[points.length - 1];
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+
+    const straight_length = Math.sqrt(dx * dx + dy * dy);
+
+    if ((Math.abs(length - straight_length) / length) < 0.08) {
+        return true;
+    }
+
+    return false;
+}
+
+function is_closed_loop(points, length) {
+    const p0 = points[0];
+    const p1 = points[points.length - 1];
+
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+
+    if (Math.sqrt(dx * dx + dy * dy) < length / 10) {
+        return true;
+    }
+
+    return false;
+}
+
+function bake_current_stroke(user_id, stroke, bbox, length) {
+    const processed_stroke = process_stroke(stroke.points, bbox, length);
+    if (is_straight_line(processed_stroke, length)) {
+        Ctx.lineWidth = 5;
+        Ctx.strokeStyle = Users[user_id].color;
+
+        Ctx.beginPath();
+            Ctx.moveTo(processed_stroke[0].x, processed_stroke[0].y);
+            Ctx.lineTo(processed_stroke[processed_stroke.length - 1].x, processed_stroke[processed_stroke.length - 1].y);
+        Ctx.stroke();
+        return;
+    }
+
+    let closed = false;
+    if (is_closed_loop(processed_stroke, length)) {
+        closed = true;
+    }
     // const xs = [200, 400, 500, 700];
     // const ys = [500, 100, 100, 500];
 
@@ -212,10 +280,10 @@ function bake_current_stroke(user_id, stroke, bbox) {
     // }
     // const splines = compute_splines(processed_stroke);
 
-    const spline_points = compute_splines2(processed_stroke);
+    const spline_points = compute_splines2(processed_stroke, closed);
 
-    console.log(processed_stroke);
-    console.log(spline_points)
+    // console.log(processed_stroke);
+    // console.log(spline_points)
 
     // Ctx.strokeStyle = 'green';
     // Ctx.lineWidth = 5;
@@ -239,7 +307,7 @@ function bake_current_stroke(user_id, stroke, bbox) {
     Ctx.stroke();
 
     // Ctx.strokeStyle = 'blue';
-    // Ctx.lineWidth = 10;
+    // Ctx.lineWidth = 8;
 
     // Ctx.beginPath();
     //     for (let i = 0; i < processed_stroke.length; ++i) {
@@ -442,9 +510,11 @@ async function up(e) {
     Users[Me].current_stroke.points.push({'x': x, 'y': y});
     Users[Me].current_stroke.id = stroke_id;
     
-    const bbox = stroke_bbox(Users[Me].current_stroke, Users[Me].width);
+    const stroke_info = stroke_stats(Users[Me].current_stroke, Users[Me].width);
+    const bbox = stroke_info.bbox;
+    const length = stroke_info.length;
 
-    bake_current_stroke(Me, Users[Me].current_stroke, bbox);
+    bake_current_stroke(Me, Users[Me].current_stroke, bbox, length);
     Ctx2.clearRect(bbox.xmin, bbox.ymin, bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin);
 
     Users[Me].finished_strokes.push(Users[Me].current_stroke);
