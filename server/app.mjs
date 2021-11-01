@@ -243,7 +243,7 @@ function handle_style_change(user_id, desk_id, message) {
 function handle_undo(user_id, desk_id, message) {
     const stroke_id = message.readUInt32LE(2 * 4);
     store_stroke.remove(stroke_id);
-    desk_store.remove(desk_id, stroke_id);
+    store_desk.remove(desk_id, stroke_id);
 }
 
 function send_initital_info_to_connected_user(ws, user_id, desk_id) {
