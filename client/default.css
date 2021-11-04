@@ -10,6 +10,7 @@ html, body {
 canvas {
     position: absolute;
     pointer-events: none;
+    cursor: none;
 }
 
 canvas#cv {
@@ -20,6 +21,13 @@ canvas#cv {
 canvas#cv-2 {
     z-index: 2;
     opacity: 0.5;
+}
+
+#cursor {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid black;
+    box-sizing: border-box;
 }
 
 .tools-menu {

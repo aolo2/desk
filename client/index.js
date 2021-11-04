@@ -450,6 +450,9 @@ function update_stroke_preview(e) {
     Elements.preview.style.width = width + 'px';
     Elements.preview.style.height = width + 'px';
     Elements.preview.style.background = color;
+
+    Elements.cursor.style.width = width + 'px';
+    Elements.cursor.style.height = width + 'px';
 }
 
 function change_color(e) {
@@ -526,11 +529,14 @@ async function up(e) {
 
 function move(e) {
     if (Me === null) return;
+    
+    const x = e.offsetX;
+    const y = e.offsetY;
+    const width = Users[Me].width;
+
+    Elements.cursor.style.transform = `translate(${Math.round(x - width / 2)}px, ${Math.round(y - width / 2)}px)`;
 
     if (Users[Me].current_stroke !== null) {
-        const x = e.offsetX;
-        const y = e.offsetY;
-
         const data = new ArrayBuffer(16); // message tag (4 bytes) + my id (4 bytes) + x (4 bytes) + y (4 bytes)
         const view = new Int32Array(data);
 
@@ -946,12 +952,15 @@ document.addEventListener('DOMContentLoaded', function main() {
     Elements.canvas.addEventListener('pointerdown', down);
     Elements.canvas.addEventListener('pointermove', move);
 
-    Elements.slider = document.getElementById('stroke-width');
+    Elements.slider       = document.getElementById('stroke-width');
     Elements.color_picker = document.getElementById('stroke-color');
-    Elements.preview = document.getElementById('stroke-preview');
+    Elements.preview      = document.getElementById('stroke-preview');
+    Elements.cursor       = document.getElementById('cursor');
 
     Elements.slider.value = DEFAULT_WIDTH;
     Elements.color_picker.value = DEFAULT_COLOR;
+    Elements.cursor.style.width = DEFAULT_WIDTH + 'px';
+    Elements.cursor.style.height = DEFAULT_WIDTH + 'px';
 
     // document.getElementById('change-to-pencil').addEventListener('click', () => { change_tool_to('pencil'); })
     // document.getElementById('change-to-eraser').addEventListener('click', () => { change_tool_to('eraser'); })
