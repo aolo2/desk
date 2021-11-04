@@ -56,12 +56,16 @@ function full_redraw() {
     for (const user_id in Users) {
         const user = Users[user_id];
         for (const stroke of user.finished_strokes) {
+            const closed = is_closed_loop(stroke.points, length);
+            const spline_points = compute_splines_catmull_rom(stroke.points, closed);
+
             Ctx.lineWidth = stroke.width;
             Ctx.strokeStyle = stroke.color;
 
             Ctx.beginPath();
-            for (let i = 1; i < stroke.points.length; ++i) {
-                const point = stroke.points[i];
+            Ctx.moveTo(spline_points[0].x, spline_points[0].y);
+            for (let i = 1; i < spline_points.length; ++i) {
+                const point = spline_points[i];
                 Ctx.lineTo(point.x, point.y);
             }
             Ctx.stroke();
@@ -154,77 +158,6 @@ function is_local_extrema(points, at) {
     return result;
 }
 
-function process_stroke(points, bbox, length) {
-    const result = [];
-
-    if (points.length === 0) return result;
-
-    const width = bbox.xmax - bbox.xmin;
-    const height = bbox.ymax - bbox.ymin;
-    const length_cutoff = 10;
-
-    result.push({'x': points[0].x, 'y': points[0].y});
-
-    // Ctx.strokeStyle = 'green';
-    // Ctx.lineWidth = 10;
-    // Ctx.beginPath();
-    // Ctx.moveTo(points[0].x, points[0].y);
-    // Ctx.lineTo(points[0].x, points[0].y);
-    // Ctx.stroke();
-
-    for (let i = 1; i < points.length; ++i) {
-        const p = points[i];
-        const last = result[result.length - 1];
-
-        const dx = Math.abs(p.x - last.x);
-        const dy = Math.abs(p.y - last.y);
-
-        const dist2 = dx * dx + dy * dy;
-
-        if (dist2 >= length_cutoff * length_cutoff) {
-            result.push(p);
-        } else if (is_local_extrema(points, i)) {
-            result.push(p);
-        }
-    }
-
-    result.push({'x': points[points.length - 1].x, 'y': points[points.length - 1].y});    
-
-    console.log(points.length, result.length)
-
-    return result;
-}
-
-function compute_splines2(points, closed) {
-    const result = [];
-
-    if (!closed) {
-        result.push(points[0]);
-
-        for (let i = 1; i < points.length - 2; ++i) {
-            const p0 = points[i - 1];
-            const p1 = points[i + 0];
-            const p2 = points[i + 1];
-            const p3 = points[i + 2];
-            const spline_points = cm(p0, p1, p2, p3, 5);
-            result.push(...spline_points);
-         }
-
-         result.push(points[points.length - 1]);
-    } else {
-        for (let i = 0; i < points.length; ++i) {
-            const p0 = i > 0 ? points[i - 1] : points[points.length - 1];
-            const p1 = points[i + 0];
-            const p2 = points[(i + 1) % points.length];
-            const p3 = points[(i + 2) % points.length];
-            const spline_points = cm(p0, p1, p2, p3, 5);
-            result.push(...spline_points);
-         }
-    }
-
-     return result;
-}
-
 function is_straight_line(points, length) {
     const p0 = points[0];
     const p1 = points[points.length - 1];
@@ -254,48 +187,48 @@ function is_closed_loop(points, length) {
     return false;
 }
 
+function process_stroke(points, bbox, length) {
+    const result = [];
+
+    if (points.length === 0) return result;
+
+    const width = bbox.xmax - bbox.xmin;
+    const height = bbox.ymax - bbox.ymin;
+    const length_cutoff = 10;
+
+    result.push({'x': points[0].x, 'y': points[0].y});
+
+    for (let i = 1; i < points.length; ++i) {
+        const p = points[i];
+        const last = result[result.length - 1];
+
+        const dx = Math.abs(p.x - last.x);
+        const dy = Math.abs(p.y - last.y);
+
+        const dist2 = dx * dx + dy * dy;
+
+        if (dist2 >= length_cutoff * length_cutoff) {
+            result.push(p);
+        } else if (is_local_extrema(points, i)) {
+            result.push(p);
+        }
+    }
+
+    result.push({'x': points[points.length - 1].x, 'y': points[points.length - 1].y});    
+
+    if (is_straight_line(result, length)) {
+        return [result[0], result[result.length - 1]];
+    }
+
+    return result;
+}
+
 function bake_current_stroke(user_id, stroke, bbox, length) {
     const processed_stroke = process_stroke(stroke.points, bbox, length);
-    if (is_straight_line(processed_stroke, length)) {
-        Ctx.lineWidth = 5;
-        Ctx.strokeStyle = Users[user_id].color;
+    const closed = is_closed_loop(processed_stroke, length);
+    const spline_points = compute_splines_catmull_rom(processed_stroke, closed);
 
-        Ctx.beginPath();
-            Ctx.moveTo(processed_stroke[0].x, processed_stroke[0].y);
-            Ctx.lineTo(processed_stroke[processed_stroke.length - 1].x, processed_stroke[processed_stroke.length - 1].y);
-        Ctx.stroke();
-        return;
-    }
-
-    let closed = false;
-    if (is_closed_loop(processed_stroke, length)) {
-        closed = true;
-    }
-    // const xs = [200, 400, 500, 700];
-    // const ys = [500, 100, 100, 500];
-
-    // const processed_stroke = [];
-    // for (let i = 0; i < xs.length; ++i) {
-    //     processed_stroke.push({'x': xs[i], 'y': ys[i]});
-    // }
-    // const splines = compute_splines(processed_stroke);
-
-    const spline_points = compute_splines2(processed_stroke, closed);
-
-    // console.log(processed_stroke);
-    // console.log(spline_points)
-
-    // Ctx.strokeStyle = 'green';
-    // Ctx.lineWidth = 5;
-
-    // Ctx.beginPath();
-    //     for (let i = 0; i < spline_points.length; ++i) {
-    //         Ctx.moveTo(spline_points[i].x, spline_points[i].y);
-    //         Ctx.lineTo(spline_points[i].x, spline_points[i].y);
-    //     }
-    // Ctx.stroke();
-
-    Ctx.lineWidth = 5;
+    Ctx.lineWidth = Users[Me].width;
     Ctx.strokeStyle = Users[user_id].color;
 
     Ctx.beginPath();
@@ -306,135 +239,37 @@ function bake_current_stroke(user_id, stroke, bbox, length) {
         }
     Ctx.stroke();
 
-    // Ctx.strokeStyle = 'blue';
-    // Ctx.lineWidth = 8;
-
-    // Ctx.beginPath();
-    //     for (let i = 0; i < processed_stroke.length; ++i) {
-    //         Ctx.moveTo(processed_stroke[i].x, processed_stroke[i].y);
-    //         Ctx.lineTo(processed_stroke[i].x, processed_stroke[i].y);
-    //     }
-    // Ctx.stroke();
+    return processed_stroke;
 }
 
-////////////////////////////////////////
-//////////////////// Splines
-////////////////////////////////////////
-function tma(A, B, C, D) {
-    const N = D.length;
+function compute_splines_catmull_rom(points, closed) {
+    const result = [];
 
-    // Прямой ход
-    const C_prime = []
-    const D_prime = []
+    if (!closed) {
+        result.push(points[0]);
 
-    C_prime.push(C[0] / B[0])
-    D_prime.push(D[0] / B[0])
+        for (let i = 1; i < points.length - 2; ++i) {
+            const p0 = points[i - 1];
+            const p1 = points[i + 0];
+            const p2 = points[i + 1];
+            const p3 = points[i + 2];
+            const spline_points = cm(p0, p1, p2, p3, 5);
+            result.push(...spline_points);
+         }
 
-    for (let i = 1; i < N; ++i) {
-        const nom = C[i];
-        const denom = B[i] - A[i] * C_prime[i - 1];
-        C_prime.push(nom / denom);
+         result.push(points[points.length - 1]);
+    } else {
+        for (let i = 0; i < points.length; ++i) {
+            const p0 = i > 0 ? points[i - 1] : points[points.length - 1];
+            const p1 = points[i + 0];
+            const p2 = points[(i + 1) % points.length];
+            const p3 = points[(i + 2) % points.length];
+            const spline_points = cm(p0, p1, p2, p3, 5);
+            result.push(...spline_points);
+         }
     }
 
-    for (let i = 1; i < N; ++i) {
-        const nom = D[i] - A[i] * D_prime[i - 1];
-        const denom = B[i] - A[i] * C_prime[i - 1];
-        D_prime.push(nom / denom);
-    }
-
-    // Обратный ход
-    const X = [];
-
-    X.push(D_prime[N - 1]);
-
-    for (let i = 1; i < N; ++i) {
-        X.push(D_prime[N - 1 - i] - C_prime[N - 1 - i] * X[i - 1]);
-    }
-
-    X.reverse();
-
-    return X;
-}
-
-function compute_c(xs, ys) {
-    const N = xs.length;
-
-    const a = []; // под главной диагональю
-    const b = []; // главная диагональ
-    const c = []; // над главной диагональю
-    const d = []; // вектор правых частей
-
-    // Заполним поддиагональ
-    a.push(0);
-    for (let i = 2; i < N - 1; ++i) {
-        const h_i = xs[i] - xs[i - 1];
-        a.push(h_i / 6);
-    }
-
-    // Заполним диагональ
-    for (let i = 1; i < N - 1; ++i) {
-        const h_i = xs[i] - xs[i - 1];
-        const h_next = xs[i + 1] - xs[i];
-        b.push((h_i + h_next) / 3);
-    }
-
-    // Заполним наддиагональ
-    for (let i = 1; i < N - 2; ++i) {
-        const h_next = xs[i + 1] - xs[i];
-        c.push(h_next / 6);
-    }
-    c.push(0);
-
-    // Заполним правые части
-    for (let i = 1; i < N - 1; ++i) {
-        const h_i = xs[i] - xs[i - 1];
-        const h_next = xs[i + 1] - xs[i];
-        const S1 = (ys[i + 1] - ys[i]) / h_next;
-        const S2 = (ys[i] - ys[i - 1]) / h_i;
-        d.push(S1 - S2);
-    }
-
-    // Применим метод прогонки
-    const x = tma(a, b, c, d);
-
-    // Добавим c_0 и c_N
-    x.unshift(0);
-    x.push(0);
-
-    return x;
-}
-
-function compute_splines(points) {
-    console.time('splines');
-
-    const N = points.length;
-    const xs = points.map(p => p.x);
-    const ys = points.map(p => p.y);
-
-    const a = [...ys];
-    const c = compute_c(xs, ys);
-    const d = [];
-    const b = [];
-
-    // Вычислим d
-    for (let i = N - 1; i > 0; --i) {
-        const h_i = xs[i] - xs[i - 1];
-        d.unshift((c[i] - c[i - 1]) / h_i);
-    }
-    d.unshift(0);
-
-    // Вычислим b
-    for (let i = N - 1; i > 0; --i) {
-        const h_i = xs[i] - xs[i - 1];
-        const S1 = (a[i] - a[i - 1]) / h_i;
-        const S2 = h_i * (2 * c[i] + c[i - 1]) / 6;
-        b.unshift(S1 + S2);
-    }
-    b.unshift(0);
-
-    console.timeEnd('splines');
-
-    return { 'a': a, 'b': b, 'c': c, 'd': d };
+     return result;
 }
 
 ////////////////////////////////////////
@@ -516,10 +351,11 @@ async function up(e) {
     const stroke_info = stroke_stats(Users[Me].current_stroke, Users[Me].width);
     const bbox = stroke_info.bbox;
     const length = stroke_info.length;
+    const simplified_points = bake_current_stroke(Me, Users[Me].current_stroke, bbox, length);
 
-    bake_current_stroke(Me, Users[Me].current_stroke, bbox, length);
     Ctx2.clearRect(bbox.xmin, bbox.ymin, bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin);
 
+    Users[Me].current_stroke.points = simplified_points;
     Users[Me].finished_strokes.push(Users[Me].current_stroke);
     Users[Me].current_stroke = null;
 

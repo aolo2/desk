@@ -191,6 +191,121 @@ function user_create(id, ws) {
     return user;
 }
 
+function is_local_extrema(points, at) {
+    let is_xmax = true;
+    let is_xmin = true;
+    let is_ymax = true;
+    let is_ymin = true;
+
+    const p = points[at];
+
+    const from = Math.max(0, at - 5);
+    const to = Math.min(points.length, at + 5);
+
+    for (let i = from; i < to; ++i) {
+        if (i !== at) {
+            const other = points[i];
+            if (other.x >= p.x) is_xmax = false;
+            if (other.x <= p.x) is_xmin = false;
+            if (other.y >= p.y) is_ymax = false;
+            if (other.y <= p.y) is_ymin = false;
+        }
+    }
+    
+    const result = is_xmax || is_xmin || is_ymax || is_ymin;
+
+    return result;
+}
+
+function is_straight_line(points, length) {
+    const p0 = points[0];
+    const p1 = points[points.length - 1];
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+
+    const straight_length = Math.sqrt(dx * dx + dy * dy);
+
+    if ((Math.abs(length - straight_length) / length) < 0.08) {
+        return true;
+    }
+
+    return false;
+}
+
+function stroke_stats(points, width) {
+    let length = 0;
+    let xmin = points[0].x, ymin = points[0].y;
+    let xmax = xmin, ymax = ymin;
+
+    for (let i = 0; i < points.length; ++i) {
+        const point = points[i];
+        if (point.x < xmin) xmin = point.x;
+        if (point.y < ymin) ymin = point.y;
+        if (point.x > xmax) xmax = point.x;
+        if (point.y > ymax) ymax = point.y;
+
+        if (i > 0) {
+            const last = points[i - 1];
+            const dx = point.x - last.x;
+            const dy = point.y - last.y;
+            length += Math.sqrt(dx * dx + dy * dy);
+        }
+    }
+
+    xmin -= width;
+    ymin -= width;
+    xmax += width;
+    ymax += width;
+
+    const bbox = {
+        'xmin': xmin,
+        'ymin': ymin,
+        'xmax': xmax,
+        'ymax': ymax
+    };
+
+    return {
+        'bbox': bbox,
+        'length': length,
+    };
+}
+
+function process_stroke(points, bbox, length) {
+    const result = [];
+
+    if (points.length === 0) return result;
+
+    const width = bbox.xmax - bbox.xmin;
+    const height = bbox.ymax - bbox.ymin;
+    const length_cutoff = 10;
+
+    result.push({'x': points[0].x, 'y': points[0].y});
+
+    for (let i = 1; i < points.length; ++i) {
+        const p = points[i];
+        const last = result[result.length - 1];
+
+        const dx = Math.abs(p.x - last.x);
+        const dy = Math.abs(p.y - last.y);
+
+        const dist2 = dx * dx + dy * dy;
+
+        if (dist2 >= length_cutoff * length_cutoff) {
+            result.push(p);
+        } else if (is_local_extrema(points, i)) {
+            result.push(p);
+        }
+    }
+
+    result.push({'x': points[points.length - 1].x, 'y': points[points.length - 1].y});    
+
+    if (is_straight_line(result, length)) {
+        return [result[0], result[result.length - 1]];
+    }
+
+    return result;
+}
+
 function handle_draw(user_id, desk_id, message) {
     const x = message.readUInt32LE(2 * 4);
     const y = message.readUInt32LE(3 * 4);
@@ -213,17 +328,14 @@ async function handle_stroke_end(user_id, desk_id, message) {
 
     user.current_stroke.push({'x': x, 'y': y});
 
+    const stroke_info = stroke_stats(user.current_stroke, user.width);
+    const simplified_stroke = process_stroke(user.current_stroke, stroke_info.bbox, stroke_info.length);
     const finished_stroke = {
         'user_id': user_id,
         'width': user.width,
         'color': user.color,
-        'points': user.current_stroke,
+        'points': simplified_stroke,
     };
-
-    // let stroke_id = random_id();
-    // while (store_stroke.doesExist(stroke_id)) {
-    //     stroke_id = random_id();
-    // }
 
     await store_desk.put(key_desk, stroke_id);
     await store_stroke.put(stroke_id, finished_stroke);
