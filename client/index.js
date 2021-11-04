@@ -75,39 +75,58 @@ function full_redraw() {
     console.timeEnd('Full redraw');
 }
 
-function draw_current_stroke(user_id) {
-    const ctx = (user_id === Me ? Ctx2 : Ctx);
-    const stroke = Users[user_id].current_stroke;
+function redraw_current() {
+    Ctx2.clearRect(0, 0, Elements.canvas.width, Elements.canvas.height); // TODO: only bboxes
+    
+    for (const user_id in Users) {
+        const user = Users[user_id];
+        if (user.current_stroke !== null) {
+            Ctx2.lineWidth = user.width;
+            Ctx2.strokeStyle = user.color;
 
-    if (stroke !== null) {
-        const last = stroke.points.length - 1;
-        ctx.lineWidth = Users[user_id].width;
-        ctx.strokeStyle = Users[user_id].color;
-        ctx.beginPath();
-        if (stroke.points.length > 1) {
-            ctx.moveTo(stroke.points[last - 1].x, stroke.points[last - 1].y);
-            ctx.lineTo(stroke.points[last].x, stroke.points[last].y);
-        } else {
-            ctx.moveTo(stroke.points[last].x, stroke.points[last].y);
+            Ctx2.beginPath();
+            Ctx2.moveTo(user.current_stroke[0].x, user.current_stroke[0].y);
+            for (let i = 1; i < user.current_stroke.length; ++i) {
+                const point = user.current_stroke[i];
+                Ctx2.lineTo(point.x, point.y);
+            }
+            Ctx2.stroke();
         }
-        ctx.stroke();
     }
 }
 
-function stroke_stats(stroke, width) {
+function draw_current_stroke(user_id) {
+    const stroke = Users[user_id].current_stroke;
+
+    if (stroke !== null) {
+        const last = stroke.length - 1;
+        Ctx2.lineWidth = Users[user_id].width;
+        Ctx2.strokeStyle = Users[user_id].color;
+        Ctx2.beginPath();
+        if (stroke.length > 1) {
+            Ctx2.moveTo(stroke[last - 1].x, stroke[last - 1].y);
+            Ctx2.lineTo(stroke[last].x, stroke[last].y);
+        } else {
+            Ctx2.moveTo(stroke[last].x, stroke[last].y);
+        }
+        Ctx2.stroke();
+    }
+}
+
+function stroke_stats(points, width) {
     let length = 0;
-    let xmin = stroke.points[0].x, ymin = stroke.points[0].y;
+    let xmin = points[0].x, ymin = points[0].y;
     let xmax = xmin, ymax = ymin;
 
-    for (let i = 0; i < stroke.points.length; ++i) {
-        const point = stroke.points[i];
+    for (let i = 0; i < points.length; ++i) {
+        const point = points[i];
         if (point.x < xmin) xmin = point.x;
         if (point.y < ymin) ymin = point.y;
         if (point.x > xmax) xmax = point.x;
         if (point.y > ymax) ymax = point.y;
 
         if (i > 0) {
-            const last = stroke.points[i - 1];
+            const last = points[i - 1];
             const dx = point.x - last.x;
             const dy = point.y - last.y;
             length += Math.sqrt(dx * dx + dy * dy);
@@ -223,12 +242,12 @@ function process_stroke(points, bbox, length) {
     return result;
 }
 
-function bake_current_stroke(user_id, stroke, bbox, length) {
-    const processed_stroke = process_stroke(stroke.points, bbox, length);
+function bake_current_stroke(user_id, points, bbox, length) {
+    const processed_stroke = process_stroke(points, bbox, length);
     const closed = is_closed_loop(processed_stroke, length);
     const spline_points = compute_splines_catmull_rom(processed_stroke, closed);
 
-    Ctx.lineWidth = Users[Me].width;
+    Ctx.lineWidth = Users[user_id].width;
     Ctx.strokeStyle = Users[user_id].color;
 
     Ctx.beginPath();
@@ -345,22 +364,26 @@ async function up(e) {
 
     (async () => { Socket.send(data); })();
 
-    Users[Me].current_stroke.points.push({'x': x, 'y': y});
-    Users[Me].current_stroke.id = stroke_id;
+    Users[Me].current_stroke.push({'x': x, 'y': y});
     
     const stroke_info = stroke_stats(Users[Me].current_stroke, Users[Me].width);
     const bbox = stroke_info.bbox;
     const length = stroke_info.length;
     const simplified_points = bake_current_stroke(Me, Users[Me].current_stroke, bbox, length);
 
-    Ctx2.clearRect(bbox.xmin, bbox.ymin, bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin);
+    Users[Me].finished_strokes.push({
+        'id': stroke_id,
+        'color': Users[Me].color,
+        'width': Users[Me].width,
+        'points': simplified_points
+    });
 
-    Users[Me].current_stroke.points = simplified_points;
-    Users[Me].finished_strokes.push(Users[Me].current_stroke);
     Users[Me].current_stroke = null;
 
     Elements.canvas.removeEventListener('pointerup', up);
     Elements.canvas.removeEventListener('pointerleave', up);
+    
+    redraw_current();
 }
 
 function move(e) {
@@ -383,7 +406,7 @@ function move(e) {
 
         (async () => { Socket.send(data); })();
 
-        Users[Me].current_stroke.points.push({'x': x, 'y': y});
+        Users[Me].current_stroke.push({'x': x, 'y': y});
         draw_current_stroke(Me);
     }
 }
@@ -426,11 +449,7 @@ function down(e) {
 
     (async () => { Socket.send(data); })();
 
-    Users[Me].current_stroke = {
-        'color': Users[Me].color,
-        'width': Users[Me].width,
-        'points': [{'x': x, 'y': y}]
-    };
+    Users[Me].current_stroke = [{'x': x, 'y': y}];
 
     draw_current_stroke(Me);
 
@@ -446,7 +465,7 @@ function handle_draw(view) {
     const user_id = view[1];
     const x = view[2];
     const y = view[3];
-    Users[user_id].current_stroke.points.push({'x': x, 'y': y});
+    Users[user_id].current_stroke.push({'x': x, 'y': y});
     draw_current_stroke(user_id);
 }
 
@@ -564,10 +583,25 @@ function handle_user_stroke_end(view) {
     const user_id = view[1];
     const x = view[2];
     const y = view[3];
-    Users[user_id].current_stroke.points.push({'x': x, 'y': y});
-    Users[user_id].finished_strokes.push(Users[user_id].current_stroke);
-    draw_current_stroke(user_id);
+    const stroke_id = view[4];
+    
+    Users[user_id].current_stroke.push({'x': x, 'y': y});
+    
+    const stroke_info = stroke_stats(Users[user_id].current_stroke, Users[user_id].width);
+    const bbox = stroke_info.bbox;
+    const length = stroke_info.length;
+    const simplified_points = bake_current_stroke(user_id, Users[user_id].current_stroke, bbox, length);
+
+    Users[user_id].finished_strokes.push({
+        'id': stroke_id,
+        'width': Users[user_id].width,
+        'color': Users[user_id].color,
+        'points': Users[user_id].current_stroke,
+    });
+
     Users[user_id].current_stroke = null;
+
+    redraw_current();
 }
 
 function handle_user_stroke_start(view) {
@@ -575,11 +609,7 @@ function handle_user_stroke_start(view) {
     const x = view[2];
     const y = view[3];
 
-    Users[user_id].current_stroke = {
-        'color': Users[user_id].color,
-        'width': Users[user_id].width,
-        'points': [{'x': x, 'y': y}]
-    };
+    Users[user_id].current_stroke = [{'x': x, 'y': y}];
 
     draw_current_stroke(user_id);
 }
