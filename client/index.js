@@ -50,6 +50,57 @@ function int_to_style(color) {
     return color_string;
 } 
 
+function stroke_stats(points, width) {
+    let length = 0;
+    let xmin = points[0].x, ymin = points[0].y;
+    let xmax = xmin, ymax = ymin;
+
+    for (let i = 0; i < points.length; ++i) {
+        const point = points[i];
+        if (point.x < xmin) xmin = point.x;
+        if (point.y < ymin) ymin = point.y;
+        if (point.x > xmax) xmax = point.x;
+        if (point.y > ymax) ymax = point.y;
+
+        if (i > 0) {
+            const last = points[i - 1];
+            const dx = point.x - last.x;
+            const dy = point.y - last.y;
+            length += Math.sqrt(dx * dx + dy * dy);
+        }
+    }
+
+    xmin -= width;
+    ymin -= width;
+    xmax += width;
+    ymax += width;
+
+    const bbox = {
+        'xmin': Math.floor(xmin),
+        'ymin': Math.floor(ymin),
+        'xmax': Math.ceil(xmax),
+        'ymax': Math.ceil(ymax)
+    };
+
+    return {
+        'bbox': bbox,
+        'length': length,
+    };
+}
+
+function draw_stroke(ctx, stroke) {
+    ctx.lineWidth = stroke.width;
+    ctx.strokeStyle = stroke.color;
+
+    ctx.beginPath();
+    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (let i = 1; i < stroke.points.length; ++i) {
+        const point = stroke.points[i];
+        ctx.lineTo(point.x, point.y);
+    }
+    ctx.stroke();
+}
+
 function full_redraw() {
     console.time('Full redraw');
 
@@ -58,20 +109,86 @@ function full_redraw() {
     for (const user_id in Users) {
         const user = Users[user_id];
         for (const stroke of user.finished_strokes) {
-            Ctx.lineWidth = stroke.width;
-            Ctx.strokeStyle = stroke.color;
-
-            Ctx.beginPath();
-            Ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-            for (let i = 1; i < stroke.points.length; ++i) {
-                const point = stroke.points[i];
-                Ctx.lineTo(point.x, point.y);
-            }
-            Ctx.stroke();
+            draw_stroke(Ctx, stroke);
         }
     }
 
     console.timeEnd('Full redraw');
+}
+
+function segment_intersects_horizontal(p0, p1, y, x0, x1) {
+    if (Math.abs(p1.y - p0.y) < 0.001) return false;
+    const t = (y - p0.y) / (p1.y - p0.y);
+    const x = p0.x + (p1.x - p0.x) * t;
+    return (x0 <= x && x <= x1);
+}
+
+function segment_intersects_vertical(p0, p1, x, y0, y1) {
+    if (Math.abs(p1.x - p0.x) < 0.001) return false;
+    const t = (x - p0.x) / (p1.x - p0.x);
+    const y = p0.y + (p1.y - p0.y) * t;
+    return (y0 <= y && y <= y1);
+}
+
+function rectangles_intersect(a, b) {
+    const result = (
+        a.xmin <= b.xmax
+        && a.xmax >= b.xmin
+        && a.ymin <= b.ymax 
+        && a.ymax >= b.ymin
+    );
+
+    return result;
+}
+
+function stroke_intersects_region(stroke, bbox) {
+    const stats = stroke_stats(stroke.points, stroke.width);
+
+    if (!rectangles_intersect(stats.bbox, bbox)) return false;
+    return true;
+
+    // for (let i = 1; i < stroke.points.length; ++i) {
+    //     const p0 = stroke.points[i - 1];
+    //     const p1 = stroke.points[i];
+
+    //     if ((bbox.xmin <= p0.x && p0.x <= bbox.xmax) && (bbox.ymin <= p0.y && p0.y <= bbox.ymax)
+    //         &&
+    //         (bbox.xmin <= p1.x && p1.x <= bbox.xmax) && (bbox.ymin <= p1.y && p1.y <= bbox.ymax)) 
+    //     {
+    //         return true;
+    //     }
+
+    //     if (segment_intersects_horizontal(p0, p1, bbox.ymin, bbox.xmin, bbox.xmax)) return true;
+    //     if (segment_intersects_vertical  (p0, p1, bbox.xmax, bbox.ymin, bbox.ymax)) return true;
+    //     if (segment_intersects_horizontal(p0, p1, bbox.ymax, bbox.xmin, bbox.xmax)) return true;
+    //     if (segment_intersects_vertical  (p0, p1, bbox.xmin, bbox.ymin, bbox.ymax)) return true;
+    // }
+
+    return false;
+}
+
+function redraw_region(bbox) {
+    console.time('redraw region');
+
+    Ctx.save();
+    Ctx.clearRect(bbox.xmin, bbox.ymin, bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin);
+    
+    Ctx.beginPath();
+        Ctx.rect(bbox.xmin, bbox.ymin, bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin);
+    Ctx.clip();
+
+    for (const user_id in Users) {
+        const user = Users[user_id];
+        for (const stroke of user.finished_strokes) {
+            if (stroke_intersects_region(stroke, bbox)) {
+                draw_stroke(Ctx, stroke);
+            }
+        }
+    }
+
+    Ctx.restore();
+
+    console.timeEnd('redraw region');
 }
 
 function redraw_current() {
@@ -352,7 +469,8 @@ function undo() {
 
         (async () => { Socket.send(data); })();
 
-        full_redraw();
+        const stats = stroke_stats(deleted_stroke.points, deleted_stroke.width);
+        redraw_region(stats.bbox);
     }
 }
 
@@ -518,7 +636,7 @@ function handle_user_stroke_end(view) {
         'id': stroke_id,
         'width': Users[user_id].width,
         'color': Users[user_id].color,
-        'points': Users[user_id].current_stroke,
+        'points': simplified_points,
     });
 
     Users[user_id].current_stroke = null;
