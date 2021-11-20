@@ -72,8 +72,8 @@ function stroke_stats(points, width) {
 
     xmin -= width;
     ymin -= width;
-    xmax += width;
-    ymax += width;
+    xmax += width * 2;
+    ymax += width * 2;
 
     const bbox = {
         'xmin': Math.floor(xmin),

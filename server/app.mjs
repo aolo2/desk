@@ -343,7 +343,6 @@ function send_initital_info_to_connected_user(ws, user_id, desk_id) {
     for (const stroke_id of store_desk.getValues(key_desk)) {
         const stroke = store_stroke.get(stroke_id);
         if (stroke) {
-            // TODO: delete references to deleted strokes (but do we really need to?)
             stroke.id = stroke_id;
             finished_strokes.push(stroke);
             total_finished_strokes_points += stroke.points.length;
