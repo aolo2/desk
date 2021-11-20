@@ -23,11 +23,20 @@ canvas#cv-2 {
     opacity: 0.5;
 }
 
+canvas#cv-3 {
+    z-index: 3;
+    opacity: 0;
+}
+
 #cursor {
     position: absolute;
     border-radius: 50%;
     border: 1px solid black;
     box-sizing: border-box;
+    z-index: 3;
+    cursor: none;
+    pointer-events: none;
+    background: white;
 }
 
 .tools-menu {

@@ -3,6 +3,8 @@ const DEFAULT_COLOR = '#000000';
 
 let Me = null;
 let Ctx = null;
+let Ctx3 = null;
+
 let Socket = null;
 let Users = {};
 
@@ -56,16 +58,13 @@ function full_redraw() {
     for (const user_id in Users) {
         const user = Users[user_id];
         for (const stroke of user.finished_strokes) {
-            const closed = is_closed_loop(stroke.points, length);
-            const spline_points = compute_splines_catmull_rom(stroke.points, closed);
-
             Ctx.lineWidth = stroke.width;
             Ctx.strokeStyle = stroke.color;
 
             Ctx.beginPath();
-            Ctx.moveTo(spline_points[0].x, spline_points[0].y);
-            for (let i = 1; i < spline_points.length; ++i) {
-                const point = spline_points[i];
+            Ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; ++i) {
+                const point = stroke.points[i];
                 Ctx.lineTo(point.x, point.y);
             }
             Ctx.stroke();
@@ -113,182 +112,114 @@ function draw_current_stroke(user_id) {
     }
 }
 
-function stroke_stats(points, width) {
-    let length = 0;
-    let xmin = points[0].x, ymin = points[0].y;
-    let xmax = xmin, ymax = ymin;
+function rdp_find_max(points, start, end) {
+    const EPS = 0.5;
 
-    for (let i = 0; i < points.length; ++i) {
-        const point = points[i];
-        if (point.x < xmin) xmin = point.x;
-        if (point.y < ymin) ymin = point.y;
-        if (point.x > xmax) xmax = point.x;
-        if (point.y > ymax) ymax = point.y;
+    let result = -1;
+    let max_dist = 0;
 
-        if (i > 0) {
-            const last = points[i - 1];
-            const dx = point.x - last.x;
-            const dy = point.y - last.y;
-            length += Math.sqrt(dx * dx + dy * dy);
+    const a = points[start];
+    const b = points[end];
+
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+
+    const dist_ab = Math.sqrt(dx * dx + dy * dy);
+    const sin_theta = dy / dist_ab;
+    const cos_theta = dx / dist_ab;
+
+    for (let i = start; i < end; ++i) {
+        const p = points[i];
+        
+        const ox = p.x - a.x;
+        const oy = p.y - a.y;
+
+        const rx = cos_theta * ox + sin_theta * oy;
+        const ry = -sin_theta * ox + cos_theta * oy;
+
+        const x = rx + a.x;
+        const y = ry + a.y;
+
+        const dist = Math.abs(y - a.y);
+
+        if (dist > EPS && dist > max_dist) {
+            result = i;
+            max_dist = dist;
         }
     }
-
-    xmin -= width;
-    ymin -= width;
-    xmax += width;
-    ymax += width;
-
-    const bbox = {
-        'xmin': xmin,
-        'ymin': ymin,
-        'xmax': xmax,
-        'ymax': ymax
-    };
-
-    return {
-        'bbox': bbox,
-        'length': length,
-    };
-}
-
-function is_local_extrema(points, at) {
-    let is_xmax = true;
-    let is_xmin = true;
-    let is_ymax = true;
-    let is_ymin = true;
-
-    const p = points[at];
-
-    const from = Math.max(0, at - 5);
-    const to = Math.min(points.length, at + 5);
-
-    for (let i = from; i < to; ++i) {
-        if (i !== at) {
-            const other = points[i];
-            if (other.x >= p.x) is_xmax = false;
-            if (other.x <= p.x) is_xmin = false;
-            if (other.y >= p.y) is_ymax = false;
-            if (other.y <= p.y) is_ymin = false;
-        }
-    }
-    
-    const result = is_xmax || is_xmin || is_ymax || is_ymin;
 
     return result;
 }
 
-function is_straight_line(points, length) {
-    const p0 = points[0];
-    const p1 = points[points.length - 1];
-    const dx = p1.x - p0.x;
-    const dy = p1.y - p0.y;
+function process_rdp_r(points, start, end) {
+    let result = [];
+    
+    const max = rdp_find_max(points, start, end);
 
-    const straight_length = Math.sqrt(dx * dx + dy * dy);
-
-    if ((Math.abs(length - straight_length) / length) < 0.08) {
-        return true;
+    if (max !== -1) {
+        const before = process_rdp_r(points, start, max);
+        const after = process_rdp_r(points, max, end);
+        result = [...before, points[max], ...after];
     }
 
-    return false;
+    return result;
 }
 
-function is_closed_loop(points, length) {
-    const p0 = points[0];
-    const p1 = points[points.length - 1];
-
-    const dx = p1.x - p0.x;
-    const dy = p1.y - p0.y;
-
-    if (Math.sqrt(dx * dx + dy * dy) < length / 10) {
-        return true;
-    }
-
-    return false;
+function process_rdp(points) {
+    const result = process_rdp_r(points, 0, points.length - 1);
+    result.unshift(points[0]);
+    result.push(points[points.length - 1]);
+    return result;
 }
 
-function process_stroke(points, bbox, length) {
+function process_ewmv(points) {
     const result = [];
+    const alpha = 0.4;
 
-    if (points.length === 0) return result;
-
-    const width = bbox.xmax - bbox.xmin;
-    const height = bbox.ymax - bbox.ymin;
-    const length_cutoff = 10;
-
-    result.push({'x': points[0].x, 'y': points[0].y});
+    result.push(points[0]);
 
     for (let i = 1; i < points.length; ++i) {
         const p = points[i];
-        const last = result[result.length - 1];
-
-        const dx = Math.abs(p.x - last.x);
-        const dy = Math.abs(p.y - last.y);
-
-        const dist2 = dx * dx + dy * dy;
-
-        if (dist2 >= length_cutoff * length_cutoff) {
-            result.push(p);
-        } else if (is_local_extrema(points, i)) {
-            result.push(p);
-        }
-    }
-
-    result.push({'x': points[points.length - 1].x, 'y': points[points.length - 1].y});    
-
-    if (is_straight_line(result, length)) {
-        return [result[0], result[result.length - 1]];
+        const x = alpha * p.x + (1 - alpha) * result[result.length - 1].x;
+        const y = alpha * p.y + (1 - alpha) * result[result.length - 1].y;
+        result.push({'x': x, 'y': y});
     }
 
     return result;
 }
 
-function bake_current_stroke(user_id, points, bbox, length) {
-    const processed_stroke = process_stroke(points, bbox, length);
-    const closed = is_closed_loop(processed_stroke, length);
-    const spline_points = compute_splines_catmull_rom(processed_stroke, closed);
+function process_stroke(points) {
+    const result0 = process_ewmv(points);
+    const result1 = process_rdp(result0);
+    return result1;
+}
+
+function bake_current_stroke(user_id, points) {
+    const processed_stroke = process_stroke(points);
 
     Ctx.lineWidth = Users[user_id].width;
     Ctx.strokeStyle = Users[user_id].color;
 
     Ctx.beginPath();
-        Ctx.moveTo(spline_points[0].x, spline_points[0].y);
-        for (let i = 1; i < spline_points.length; ++i) {
-            const p = spline_points[i];
+        Ctx.moveTo(processed_stroke[0].x, processed_stroke[0].y);
+        for (let i = 1; i < processed_stroke.length; ++i) {
+            const p = processed_stroke[i];
             Ctx.lineTo(p.x, p.y);
         }
     Ctx.stroke();
 
+    Ctx3.lineWidth = Users[user_id].width;
+    Ctx3.strokeStyle = 'blue';
+
+    Ctx3.beginPath();
+        for (let i = 0; i < processed_stroke.length; ++i) {
+            const p = processed_stroke[i];
+            Ctx3.moveTo(p.x, p.y);
+            Ctx3.lineTo(p.x, p.y);
+        }
+    Ctx3.stroke();
+
     return processed_stroke;
-}
-
-function compute_splines_catmull_rom(points, closed) {
-    const result = [];
-
-    if (!closed) {
-        result.push(points[0]);
-
-        for (let i = 1; i < points.length - 2; ++i) {
-            const p0 = points[i - 1];
-            const p1 = points[i + 0];
-            const p2 = points[i + 1];
-            const p3 = points[i + 2];
-            const spline_points = cm(p0, p1, p2, p3, 5);
-            result.push(...spline_points);
-         }
-
-         result.push(points[points.length - 1]);
-    } else {
-        for (let i = 0; i < points.length; ++i) {
-            const p0 = i > 0 ? points[i - 1] : points[points.length - 1];
-            const p1 = points[i + 0];
-            const p2 = points[(i + 1) % points.length];
-            const p3 = points[(i + 2) % points.length];
-            const spline_points = cm(p0, p1, p2, p3, 5);
-            result.push(...spline_points);
-         }
-    }
-
-     return result;
 }
 
 ////////////////////////////////////////
@@ -366,10 +297,7 @@ async function up(e) {
 
     Users[Me].current_stroke.push({'x': x, 'y': y});
     
-    const stroke_info = stroke_stats(Users[Me].current_stroke, Users[Me].width);
-    const bbox = stroke_info.bbox;
-    const length = stroke_info.length;
-    const simplified_points = bake_current_stroke(Me, Users[Me].current_stroke, bbox, length);
+    const simplified_points = bake_current_stroke(Me, Users[Me].current_stroke);
 
     Users[Me].finished_strokes.push({
         'id': stroke_id,
@@ -382,7 +310,7 @@ async function up(e) {
 
     Elements.canvas.removeEventListener('pointerup', up);
     Elements.canvas.removeEventListener('pointerleave', up);
-    
+
     redraw_current();
 }
 
@@ -569,14 +497,11 @@ function handle_user_connect(view) {
             'finished_strokes': [],
         };
     }
-
-    // console.log(Users);
 }
 
 function handle_user_disconnect(view) {
     const user_id = view[1];
     delete Users[user_id];
-    // console.log(Users)
 }
 
 function handle_user_stroke_end(view) {
@@ -587,10 +512,7 @@ function handle_user_stroke_end(view) {
     
     Users[user_id].current_stroke.push({'x': x, 'y': y});
     
-    const stroke_info = stroke_stats(Users[user_id].current_stroke, Users[user_id].width);
-    const bbox = stroke_info.bbox;
-    const length = stroke_info.length;
-    const simplified_points = bake_current_stroke(user_id, Users[user_id].current_stroke, bbox, length);
+    const simplified_points = bake_current_stroke(user_id, Users[user_id].current_stroke);
 
     Users[user_id].finished_strokes.push({
         'id': stroke_id,
@@ -701,119 +623,20 @@ async function on_message(event) {
     }
 }
 
-function GetT(t, p0, p1) {
-    const dx = p1.x - p0.x;
-    const dy = p1.y - p0.y;
-    const a = dx * dx + dy * dy;
-    const b = Math.pow(a, 0.25);
-
-    return b + t;
-}
-
-function Lerp(a, b, t) {
-    return a * t + b * (1 - t);
-}
-
-function cm(p0, p1, p2, p3, steps) {
-    const points = [];
-    const dt = 1 / steps;
-
-    for (let t = 0; t <= 1; t += dt) {
-        // const t0 = 0;
-        // const t1 = GetT(t0, p0, p1);
-        // const t2 = GetT(t1, p1, p2);
-        // const t3 = GetT(t2, p2, p3);
-        
-        // const t = ti;
-
-        // const a1x = (t1 - t) / (t1 - t0) * p0.x + (t - t0) / (t1 - t0) * p1.x;
-        // const a1y = (t1 - t) / (t1 - t0) * p0.y + (t - t0) / (t1 - t0) * p1.y;
-
-        // const a2x = (t2 - t) / (t2 - t1) * p1.x + (t - t1) / (t2 - t1) * p2.x;
-        // const a2y = (t2 - t) / (t2 - t1) * p1.y + (t - t1) / (t2 - t1) * p2.y;
-
-        // const a3x = (t3 - t) / (t3 - t2) * p2.x + (t - t2) / (t3 - t2) * p3.x;
-        // const a3y = (t3 - t) / (t3 - t2) * p2.y + (t - t2) / (t3 - t2) * p3.y;
-
-        // const b1x = (t2 - t) / (t3 - t0) * a1x + (t - t0) / (t2 - t0) * a2x;
-        // const b1y = (t2 - t) / (t3 - t0) * a1y + (t - t0) / (t2 - t0) * a2y;
-        
-        // const b2x = (t3 - t) / (t3 - t1) * a2x + (t - t1) / (t3 - t1) * a3x;
-        // const b2y = (t3 - t) / (t3 - t1) * a2y + (t - t1) / (t3 - t1) * a3y;
-
-        // const cx = (t2 - t) / (t2 - t1) * b1x + (t - t1) / (t2 - t1) * b2x;
-        // const cy = (t2 - t) / (t2 - t1) * b1y + (t - t1) / (t2 - t1) * b2y;
-
-        const tt = t * t;
-        const ttt = t * t * t;
-
-        const t0 = -ttt + 2 * tt - t;
-        const t1 = 3 * ttt - 5 * tt + 2;
-        const t2 = - 3 * ttt + 4 * tt + t;
-        const t3 = ttt - tt;
-
-        const x = 0.5 * (t0 * p0.x + t1 * p1.x + t2 * p2.x + t3 * p3.x);
-        const y = 0.5 * (t0 * p0.y + t1 * p1.y + t2 * p2.y + t3 * p3.y);
-
-        points.push({'x': x, 'y': y});
-    }
-
-    return points;
-}
-
-function test_catmull_rom() {
-    const p0 = {'x': 100, 'y': 100};
-    const p1 = {'x': 550, 'y': 550};
-    const p2 = {'x': 600, 'y': 300};
-    const p3 = {'x': 820, 'y': 180};
-
-    const points = cm(p0, p1, p2, p3, 30);
-
-    Ctx.lineWidth = 5;
-    Ctx.strokeStyle = 'red';
-
-    Ctx.beginPath();
-    Ctx.moveTo(p0.x, p0.y);
-    Ctx.lineTo(p0.x, p0.y);
-    Ctx.stroke();
-
-    Ctx.beginPath();
-    Ctx.moveTo(p1.x, p1.y);
-    Ctx.lineTo(p1.x, p1.y);
-    Ctx.stroke();
-
-    Ctx.beginPath();
-    Ctx.moveTo(p2.x, p2.y);
-    Ctx.lineTo(p2.x, p2.y);
-    Ctx.stroke();
-
-    Ctx.beginPath();
-    Ctx.moveTo(p3.x, p3.y);
-    Ctx.lineTo(p3.x, p3.y);
-    Ctx.stroke();
-
-    Ctx.strokeStyle = 'blue';
-    Ctx.lineWidth = 3;
-    Ctx.beginPath();
-    Ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; ++i) {
-        Ctx.lineTo(points[i].x, points[i].y);
-    }
-    Ctx.stroke();
-}
-
 document.addEventListener('DOMContentLoaded', function main() {
     Elements.canvas  = document.getElementById('cv');
     Elements.canvas2 = document.getElementById('cv-2');
+    Elements.canvas3 = document.getElementById('cv-3');
 
-    Elements.canvas2.width  = Elements.canvas.width  = 1920;
-    Elements.canvas2.height = Elements.canvas.height = 1080 * 3;
+    Elements.canvas3.width  = Elements.canvas2.width  = Elements.canvas.width  = 1920;
+    Elements.canvas3.height = Elements.canvas2.height = Elements.canvas.height = 1080 * 3;
     
     Ctx  = Elements.canvas.getContext('2d');
     Ctx2 = Elements.canvas2.getContext('2d');
+    Ctx3 = Elements.canvas3.getContext('2d');
 
-    Ctx2.lineJoin = Ctx.lineJoin = 'round';
-    Ctx2.lineCap  = Ctx.lineCap  = 'round';
+    Ctx3.lineJoin = Ctx2.lineJoin = Ctx.lineJoin = 'round';
+    Ctx3.lineCap  = Ctx2.lineCap  = Ctx.lineCap  = 'round';
 
     Elements.canvas.addEventListener('pointerdown', down);
     Elements.canvas.addEventListener('pointermove', move);
@@ -828,15 +651,10 @@ document.addEventListener('DOMContentLoaded', function main() {
     Elements.cursor.style.width = DEFAULT_WIDTH + 'px';
     Elements.cursor.style.height = DEFAULT_WIDTH + 'px';
 
-    // document.getElementById('change-to-pencil').addEventListener('click', () => { change_tool_to('pencil'); })
-    // document.getElementById('change-to-eraser').addEventListener('click', () => { change_tool_to('eraser'); })
-
     Elements.color_picker.addEventListener('change', change_color);
     Elements.color_picker.addEventListener('input',  update_stroke_preview);
     Elements.slider      .addEventListener('change', change_slider);
     Elements.slider      .addEventListener('input',  update_stroke_preview);
-
-    // change_tool_to('pencil');
 
     const path = new URL(window.location.href).pathname;
 
@@ -845,7 +663,18 @@ document.addEventListener('DOMContentLoaded', function main() {
 
     update_stroke_preview();
 
+    // Elements.canvas.ondragover = Elements.canvas.ondragenter = function(evt) {
+    //     evt.preventDefault();
+    //     return false;
+    // };
 
-    // test_catmull_rom();
+    // Elements.canvas.ondrop = async function(evt) {
+    //     evt.preventDefault();
+    //     const file = evt.dataTransfer.files[0];
+    //     const bitmap = await createImageBitmap(file);
+    //     Ctx.drawImage(bitmap, evt.offsetX - Math.round(bitmap.width / 2), evt.offsetY - Math.round(bitmap.height / 2));
+    //     return false;
+    // };
+
     // Socket.addEventListener('close', on_close);
 });
